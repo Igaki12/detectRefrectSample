@@ -19,7 +19,7 @@
 </head>
 
 <body>
-    <h1>アップロード動画に姿勢推定を追加して webM でダウンロード</h1>
+    <h1>アップロード動画に姿勢推定を追加して webM形式 でダウンロード</h1>
 
     <!-- 動画ファイルを選択 -->
     <input type="file" id="fileInput" accept="video/*">
@@ -38,7 +38,7 @@
     <br><br>
 
     <!-- ダウンロードリンク -->
-    <a id="downloadLink" href="#" download="processed.webm">ダウンロード</a>
+    <a id="downloadLink" href="#" download="health-discovery.webm">ダウンロード</a>
     <br><br>
 
     <!-- Mediapipe PoseLandmarker を import -->
@@ -223,7 +223,7 @@
                 downloadLink.style.fontWeight = 'bold';
                 // ダウンロードリンクのファイル名は元の動画ファイル名 + '_DetectRefrect.webm'
                 // downloadLink.download = 'processed.webm';
-                downloadLink.download = fileInput.files[0].name.replace(/\.[^/.]+$/, "") + '_DetectRefrect.webm';
+                downloadLink.download = fileInput.files[0].name.replace(/\.[^/.]+$/, "") + '_health-discovery.webm';
             };
 
             // 録画スタート
