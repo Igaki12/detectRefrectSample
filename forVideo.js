@@ -1,15 +1,4 @@
-<!DOCTYPE html>
-<html lang="ja">
-
-<head>
-  <meta charset="UTF-8" />
-  <title>Detect & Reflect: AI Pose Estimation & Video Recording with Mediapipe & MediaRecorder API</title>
-  <!-- cssはforVideo.cssから -->
-  <link rel="stylesheet" href="forVideo.css">
-<!-- forVideo.jsから -->
- <!-- <script type="module" src="/forVideo.js"> -->
-  <script type="module">
-  import {
+import {
   PoseLandmarker,
   FilesetResolver,
   DrawingUtils
@@ -249,42 +238,3 @@ function stopRecording() {
     stopButton.disabled = true;
   }
 }
- </script>
-</head>
-
-<body>
-  <div class="container">
-    <h1>Detect & Reflect: AI Pose Estimation & Video Recording with Mediapipe & MediaRecorder API</h1>
-    <!-- <h1>for iOS (iPhone / iPad) </h1> -->
-    <h2>アップロードされた動画に姿勢推定を追加します</h2>
-    <p id="loadingTxt">初回のみモジュールの読み込みに時間がかかります。しばらくお待ちください。</p>
-
-    <!-- 動画ファイルを選択 -->
-    <input type="file" id="fileInput" accept="video/*" disabled>
-    <br><br>
-
-    <!-- アップロードされた動画を表示 -->
-    <video id="video" controls></video>
-
-    <!-- 推定結果を重ね描画するための Canvas -->
-    <canvas id="canvas"></canvas>
-    <br><br>
-
-    <!-- 録画制御ボタン -->
-    <button id="startButton" disabled>録画開始</button>
-    <button id="stopButton" disabled>録画停止</button>
-    <br><br>
-
-    <!-- ダウンロードリンク -->
-    <a id="downloadLink" href="#" download="health-discovery.webm" rel="noopener noreferrer">画像をダウンロード</a>
-    <br><br>
-    <a id="downloadJSONLink" href="#" download="health-discovery.json" rel="noopener noreferrer">JSONをダウンロード</a>
-    <br><br>
-    <!-- 次のJSONデータ解析ページへのリンク -->
-    <a href="/analyzeVideoJson.html" id="analyzeVideoJsonLink" rel="noopener noreferrer">JSONデータ解析ページへ</a>
-  </div>
-
-
-</body>
-
-</html>

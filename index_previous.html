@@ -1,0 +1,394 @@
+<!DOCTYPE html>
+<html lang="ja">
+
+<head>
+  <meta charset="utf-8" />
+  <title>Detect & Reflect: AI Pose Estimation & Video Recording with Mediapipe & MediaRecorder API</title>
+  <style>
+    /* 全体のリセット */
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    /* Body全体のスタイル */
+    body {
+      font-family: 'Helvetica Neue', Arial, sans-serif;
+      background: linear-gradient(135deg, #fcebe2, #fcc8a3);
+      /* 優しい茶色系グラデーション背景 */
+      color: black;
+      text-align: center;
+      padding: 20px;
+      min-height: 100vh;
+    }
+
+    /* コンテンツを中央にまとめるラッパー */
+    .container {
+      max-width: 800px;
+      margin: 0 auto;
+      background: rgba(255, 255, 255, 0.3);
+      /* 透過感のある背景 */
+      padding: 20px;
+      border-radius: 10px;
+    }
+
+    /* 見出し */
+    h1 {
+      font-size: 2rem;
+      margin-bottom: 20px;
+      text-shadow: 1px 1px 2px rgba(0, 0, 0, 0.3);
+    }
+    h2 {
+      font-size: 1.5rem;
+      margin-bottom: 10px;
+      text-shadow: 1px 1px 2px rgba(0, 0, 0, 0.3);
+    }
+
+    /* ファイル入力 */
+    input[type="file"] {
+      display: inline-block;
+      margin: 10px auto;
+      padding: 10px;
+      font-size: 1rem;
+      font-weight: bold;
+      background-color: #D2691E;
+      /* チョコレートカラー */
+      border: 2px solid #8B4513;
+      border-radius: 5px;
+      color: #fff;
+      cursor: pointer;
+      transition: background-color 0.3s ease, transform 0.3s ease;
+    }
+
+    input[type="file"]:hover {
+      background-color: #B22222;
+      transform: scale(1.05);
+    }
+
+    /* 動画とCanvasのスタイル */
+    video,
+    canvas {
+      max-width: 100%;
+      border: 2px solid #8B4513;
+      border-radius: 10px;
+      margin: 10px auto;
+    }
+    /* videoを中央揃えに */
+
+    /* 録画制御ボタン */
+    button {
+      font-size: 1.1rem;
+      font-weight: bold;
+      padding: 10px 20px;
+      margin: 10px;
+      background-color: #D2691E;
+      border: 2px solid #8B4513;
+      border-radius: 8px;
+      color: #fff;
+      cursor: pointer;
+      transition: background-color 0.3s ease, transform 0.3s ease;
+    }
+
+    button:disabled {
+      opacity: 0.6;
+      cursor: not-allowed;
+    }
+
+    button:hover:not(:disabled) {
+      background-color: #B22222;
+      transform: scale(1.05);
+    }
+
+    /* ダウンロードリンク（downloadLink）のスタイル */
+    /* 初期状態は非表示。JSで表示時にinline-blockとなります */
+    #downloadLink {
+      display: none;
+      margin: 10px auto;
+      font-size: 1.1rem;
+      font-weight: bold;
+      padding: 10px 20px;
+      /* 茶色系のグラデーション背景で他のボタンと差別化 */
+      background: linear-gradient(45deg, rgb(255, 10, 51),indigo);
+      border: 2px solid #8B4513;
+      border-radius: 8px;
+      color: #fff;
+      text-decoration: none;
+      /* 常に視線を誘導するパルスアニメーション */
+      animation: pulse 2s infinite;
+    }
+
+    #downloadLink:hover {
+      transform: scale(1.05);
+    }
+
+    /* レスポンシブ対応：画面幅600px以下の場合 */
+    @media (max-width: 600px) {
+      h1 {
+        font-size: 1.5rem;
+      }
+        h2 {
+            font-size: 1.2rem;
+        }
+      button,
+      input[type="file"],
+      #downloadLink {
+        font-size: 1rem;
+        padding: 8px 16px;
+      }
+    }
+
+    /* Canvasのスタイル */
+    #canvas {
+      border: 1px solid #333;
+      max-width: 100%;
+      height: auto;
+    }
+
+    /* 恒常アニメーション：パルス効果 */
+    @keyframes pulse {
+      0% {
+        transform: scale(1);
+        box-shadow: 0 0 5px rgba(255, 255, 255, 0.5);
+      }
+      50% {
+        transform: scale(1.1);
+        box-shadow: 0 0 15px rgba(255, 255, 255, 0.8);
+      }
+      100% {
+        transform: scale(1);
+        box-shadow: 0 0 5px rgba(255, 255, 255, 0.5);
+      }
+    }
+  </style>
+</head>
+
+<body>
+  <div class="container">
+    <h1>Detect & Reflect: AI Pose Estimation & Video Recording with Mediapipe & MediaRecorder API</h1>
+    <h2>アップロードされた動画に姿勢推定を追加します</h2>
+
+    <!-- 動画ファイルを選択 -->
+    <input type="file" id="fileInput" accept="video/*">
+    <br><br>
+
+    <!-- アップロードされた動画を表示 -->
+    <video id="video" controls style="display:none"></video>
+
+    <!-- 推定結果を重ね描画するための Canvas -->
+    <canvas id="canvas"></canvas>
+    <br><br>
+
+    <!-- 録画制御ボタン -->
+    <button id="startButton" disabled>録画開始</button>
+    <button id="stopButton" disabled>録画停止</button>
+    <br><br>
+
+    <!-- ダウンロードリンク -->
+    <a id="downloadLink" href="#" download="health-discovery.webm">ダウンロード</a>
+    <br><br>
+  </div>
+
+  <!-- 以下、Mediapipe等のスクリプト -->
+  <script type="module">
+    import {
+      PoseLandmarker,
+      FilesetResolver,
+      DrawingUtils
+    } from "https://cdn.skypack.dev/@mediapipe/tasks-vision@0.10.0";
+
+    // DOM 要素の取得
+    const fileInput = document.getElementById('fileInput');
+    const video = document.getElementById('video');
+    const canvas = document.getElementById('canvas');
+    const startButton = document.getElementById('startButton');
+    const stopButton = document.getElementById('stopButton');
+    const downloadLink = document.getElementById('downloadLink');
+
+    // Canvas コンテキストや MediaRecorder 関連の変数
+    let ctx = canvas.getContext('2d');
+    let mediaRecorder;
+    let recordedChunks = [];
+    let stream; // canvas.captureStream() から取得する MediaStream
+
+    // PoseLandmarker 関連
+    let poseLandmarker = null;
+    let drawingUtils = null;
+    let runningMode = 'VIDEO'; // 初期モード ("IMAGE" / "VIDEO")
+    let lastVideoTime = -1;
+
+    /**
+     * PoseLandmarker を初期化（非同期）
+     */
+    async function initPoseLandmarker() {
+      // WASM アセットをロード
+      const vision = await FilesetResolver.forVisionTasks(
+        "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.0/wasm"
+      );
+      // PoseLandmarker インスタンスを作成
+      poseLandmarker = await PoseLandmarker.createFromOptions(vision, {
+        baseOptions: {
+          modelAssetPath: "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task",
+          delegate: "GPU"
+        },
+        runningMode: runningMode,
+        numPoses: 2
+      });
+      console.log("PoseLandmarker initialized");
+    }
+
+    // PoseLandmarker の読み込みを開始
+    initPoseLandmarker().then(() => {
+      console.log("PoseLandmarker is ready");
+    });
+
+    /**
+     * ファイルが選択されたときの処理
+     */
+    fileInput.addEventListener('change', () => {
+      const file = fileInput.files[0];
+      if (!file) return;
+
+      // 選択された動画ファイルを video.src に設定
+      const fileURL = URL.createObjectURL(file);
+      video.src = fileURL;
+      video.style.display = 'block';
+
+      // メタデータ読み込み完了後に Canvas サイズを動画に合わせる
+      video.addEventListener('loadedmetadata', () => {
+        canvas.width = video.videoWidth;
+        canvas.height = video.videoHeight;
+        drawingUtils = new DrawingUtils(ctx); // DrawingUtils の初期化
+      }, { once: true });
+
+      // 録画開始ボタンを有効に
+      startButton.disabled = false;
+    });
+
+    /**
+     * 動画再生開始 -> 毎フレーム描画
+     */
+    video.addEventListener('play', () => {
+      // モデルがまだ読み込まれていなくてもとりあえず実行開始
+      requestAnimationFrame(drawFrame);
+    });
+
+    /**
+     * 動画終了時 -> 自動で録画停止
+     */
+    video.addEventListener('ended', () => {
+      if (mediaRecorder && mediaRecorder.state === 'recording') {
+        stopRecording();
+      }
+    });
+
+    /**
+     * 毎フレーム、Video を Canvas に描画し、PoseLandmarker で姿勢推定
+     */
+    async function drawFrame() {
+      if (video.paused || video.ended) {
+        return;
+      }
+
+      // 動画フレームを Canvas に描画
+      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+      // PoseLandmarker が準備できていれば、姿勢推定を実行
+      if (poseLandmarker) {
+        const startTimeMs = performance.now();
+
+        // 前回から再生位置が進んでいれば姿勢推定
+        if (lastVideoTime !== video.currentTime) {
+          lastVideoTime = video.currentTime;
+          poseLandmarker.detectForVideo(video, startTimeMs, (result) => {
+            ctx.save();
+            // 既に動画フレームが描画されているので clearRect は行わない
+
+            // 推定した各ポーズのランドマークを描画
+            for (const landmarks of result.landmarks) {
+              drawingUtils.drawLandmarks(landmarks, {
+                radius: (data) =>
+                  data.from
+                    ? DrawingUtils.lerp(data.from.z, -0.15, 0.1, 5, 1)
+                    : 1,
+              });
+              drawingUtils.drawConnectors(landmarks, PoseLandmarker.POSE_CONNECTIONS);
+            }
+            ctx.restore();
+          });
+        }
+      }
+
+      // 次フレームを要求
+      requestAnimationFrame(drawFrame);
+    }
+
+    /**
+     * 録画開始ボタンが押された
+     */
+    startButton.addEventListener('click', () => {
+      // 動画を再生
+      if (video.paused) {
+        video.play();
+      }
+
+      // Canvas から MediaStream を取得
+      stream = canvas.captureStream(30);
+
+      // MediaRecorder を作成
+      mediaRecorder = new MediaRecorder(stream, {
+        mimeType: 'video/webm; codecs=vp9'
+      });
+      recordedChunks = [];
+
+      // 録画中のデータが溜まったら配列に追加
+      mediaRecorder.ondataavailable = (e) => {
+        if (e.data && e.data.size > 0) {
+          recordedChunks.push(e.data);
+        }
+      };
+
+      // 録画停止時にダウンロード用リンクを生成
+      mediaRecorder.onstop = () => {
+        const blob = new Blob(recordedChunks, { type: 'video/webm' });
+        const url = URL.createObjectURL(blob);
+
+        downloadLink.href = url;
+        downloadLink.style.display = 'inline-block';
+
+        // ダウンロードリンクのファイル名は元の動画ファイル名 + '_health-discovery.webm'
+        downloadLink.download = fileInput.files[0].name.replace(/\.[^/.]+$/, "") + '_health-discovery.webm';
+      };
+
+      // 録画スタート
+      mediaRecorder.start();
+      console.log('Recording started');
+
+      // ボタン状態を更新
+      startButton.disabled = true;
+      stopButton.disabled = false;
+      downloadLink.style.display = 'none';
+    });
+
+    /**
+     * 録画停止ボタンが押された
+     */
+    stopButton.addEventListener('click', () => {
+      stopRecording();
+    });
+
+    /**
+     * 録画停止処理
+     */
+    function stopRecording() {
+      if (mediaRecorder && mediaRecorder.state === 'recording') {
+        mediaRecorder.stop();
+        console.log('Recording stopped');
+        startButton.disabled = false;
+        stopButton.disabled = true;
+      }
+    }
+  </script>
+</body>
+
+</html>

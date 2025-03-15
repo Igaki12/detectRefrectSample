@@ -1,0 +1,483 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <title>Pose Analysis Visualization - Health-discovery.com</title>
+  <style>
+    /* 全体：ダークな背景とシンプルな配色 */
+    body {
+      background-color: #1e1e2f;
+      color: #dcdcdc;
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+      margin: 0;
+      padding: 0;
+    }
+    /* ヘッダー：グラデーションとアニメーション */
+    header {
+      background: linear-gradient(45deg, #00d4ff, #ff00e1);
+      text-align: center;
+      padding: 20px;
+      font-size: 2.5em;
+      font-weight: bold;
+      color: white;
+      animation: glow 2s infinite alternate;
+    }
+    @keyframes glow {
+      from { text-shadow: 0 0 10px #fff, 0 0 20px #00d4ff, 0 0 30px #ff00e1; }
+      to { text-shadow: 0 0 20px #fff, 0 0 30px #00d4ff, 0 0 40px #ff00e1; }
+    }
+    /* コンテナ */
+    .container {
+      width: 90%;
+      max-width: 1200px;
+      margin: 20px auto;
+    }
+    /* ファイルアップロードセクション */
+    .upload-section {
+      margin-bottom: 20px;
+      text-align: center;
+    }
+    input[type="file"] {
+      padding: 10px;
+      background: #333;
+      color: #fff;
+      border: none;
+      border-radius: 5px;
+      cursor: pointer;
+    }
+    /* グラフなどのセクション */
+    .chart-section {
+      margin-bottom: 40px;
+    }
+    canvas {
+      background-color: rgba(255,255,255,0.1);
+      border: 1px solid #444;
+      border-radius: 5px;
+    }
+    /* セレクトボックス */
+    .select-section {
+      margin: 20px 0;
+      text-align: center;
+    }
+    select {
+      padding: 8px;
+      font-size: 1em;
+      background: #333;
+      color: #fff;
+      border: none;
+      border-radius: 5px;
+    }
+    /* テーブル */
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 20px;
+    }
+    th, td {
+      border: 1px solid #555;
+      padding: 10px;
+      text-align: center;
+    }
+    th {
+      background-color: #333;
+    }
+    tr:nth-child(even) {
+      background-color: #2a2a3a;
+    }
+  </style>
+</head>
+<body>
+  <!-- ヘッダー -->
+  <header>Health-discovery.com</header>
+  
+  <div class="container">
+    <!-- JSONアップロード -->
+    <div class="upload-section">
+      <input type="file" id="jsonFile" accept=".json">
+    </div>
+    
+    <!-- Aggregated Chart（33ランドマーク＋平均） -->
+    <div class="chart-section">
+      <h2>Aggregated Landmarks Analysis (Y Coordinate)</h2>
+      <canvas id="aggregateChart" width="800" height="400"></canvas>
+    </div>
+    
+    <!-- 個別 Landmark 分析 -->
+    <div class="select-section">
+      <h2>Individual Landmark Analysis</h2>
+      <label for="landmarkSelect">Select Landmark Index:</label>
+      <select id="landmarkSelect"></select>
+      <canvas id="landmarkChart" width="800" height="400"></canvas>
+    </div>
+    
+    <!-- フレームごとの散布図 -->
+    <div class="chart-section">
+      <h2>Frame Scatter Plot</h2>
+      <label for="frameSelect">Select Frame:</label>
+      <select id="frameSelect"></select>
+      <canvas id="scatterChart" width="800" height="400"></canvas>
+    </div>
+    
+    <!-- 特徴的な瞬間のテーブル -->
+    <div class="chart-section">
+      <h2>Key Moments Analysis</h2>
+      <table id="momentsTable">
+        <thead>
+          <tr>
+            <th>Frame Index</th>
+            <th>Average Y</th>
+            <th>Delta</th>
+          </tr>
+        </thead>
+        <tbody>
+          <!-- 解析結果がここに挿入されます -->
+        </tbody>
+      </table>
+    </div>
+  </div>
+  
+  <!-- Chart.js CDN -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  
+  <script>
+    // グローバル変数
+    let framesData = [];
+    let aggregateChart, landmarkChart, scatterChart;
+    
+    // Landmark 選択用ドロップダウンの初期化（0～32）
+    function initLandmarkSelect() {
+      const select = document.getElementById('landmarkSelect');
+      select.innerHTML = '';
+      for (let i = 0; i < 33; i++) {
+        let option = document.createElement('option');
+        option.value = i;
+        option.text = 'Landmark ' + i;
+        select.appendChild(option);
+      }
+      select.addEventListener('change', updateLandmarkChart);
+    }
+    
+    // フレーム選択用ドロップダウンの初期化
+    function initFrameSelect() {
+      const select = document.getElementById('frameSelect');
+      select.innerHTML = '';
+      for (let i = 0; i < framesData.length; i++) {
+        let option = document.createElement('option');
+        option.value = i;
+        option.text = 'Frame ' + i;
+        select.appendChild(option);
+      }
+      select.addEventListener('change', updateScatterChart);
+    }
+    
+    // JSON データのパースとグラフ更新
+    function processData(data) {
+      framesData = data;
+      const numFrames = framesData.length;
+      
+      // 各フレームごとの平均 y と各ランドマークの y を格納する配列
+      let avgYData = [];
+      let landmarksYData = Array.from({length: 33}, () => []);
+      // 個別 Landmark 分析用（x, y, z 各座標）
+      let landmarksXYZData = Array.from({length: 33}, () => ({ x: [], y: [], z: [] }));
+      
+      // フレーム番号（ラベル）
+      let labels = [];
+      for (let i = 0; i < numFrames; i++) {
+        labels.push(i);
+        // ※ JSON 内の "landmarks" は場合により 2 重配列の場合があるため
+        let lm = framesData[i].landmarks;
+        if (Array.isArray(lm) && lm.length > 0 && Array.isArray(lm[0])) {
+          lm = lm[0];
+        }
+        let sumY = 0;
+        for (let j = 0; j < 33; j++) {
+          if (lm[j]) {
+            const y = lm[j].y;
+            sumY += y;
+            landmarksYData[j].push(y);
+            landmarksXYZData[j].x.push(lm[j].x);
+            landmarksXYZData[j].y.push(lm[j].y);
+            landmarksXYZData[j].z.push(lm[j].z);
+          } else {
+            // 欠損データの場合
+            landmarksYData[j].push(null);
+            landmarksXYZData[j].x.push(null);
+            landmarksXYZData[j].y.push(null);
+            landmarksXYZData[j].z.push(null);
+          }
+        }
+        avgYData.push(sumY / 33);
+      }
+      
+      // 各種グラフの生成・更新
+      createAggregateChart(labels, landmarksYData, avgYData);
+      createLandmarkChart(labels, landmarksXYZData, 0); // 初期は Landmark 0
+      initFrameSelect();
+      createScatterChart(0, framesData[0].landmarks);
+      updateMomentsTable(avgYData);
+    }
+    
+    // Aggregated Chart の生成（33 ライン＋平均ライン）
+    function createAggregateChart(labels, landmarksYData, avgYData) {
+      const ctx = document.getElementById('aggregateChart').getContext('2d');
+      let datasets = [];
+      // サンプル用のカラーパレット
+      const colors = [
+        '#FF6633','#FFB399','#FF33FF','#FFFF99','#00B3E6',
+        '#E6B333','#3366E6','#999966','#99FF99','#B34D4D',
+        '#80B300','#809900','#E6B3B3','#6680B3','#66991A',
+        '#FF99E6','#CCFF1A','#FF1A66','#E6331A','#33FFCC',
+        '#66994D','#B366CC','#4D8000','#B33300','#CC80CC',
+        '#66664D','#991AFF','#E666FF','#4DB3FF','#1AB399',
+        '#E666B3','#33991A','#CC9999'
+      ];
+      for (let i = 0; i < 33; i++) {
+        datasets.push({
+          label: 'Landmark ' + i,
+          data: landmarksYData[i],
+          borderColor: colors[i % colors.length],
+          backgroundColor: colors[i % colors.length],
+          fill: false,
+          tension: 0.3,
+          pointRadius: 0,
+        });
+      }
+      // 平均ライン
+      datasets.push({
+        label: 'Average Y',
+        data: avgYData,
+        borderColor: '#FFFFFF',
+        backgroundColor: '#FFFFFF',
+        fill: false,
+        borderWidth: 2,
+        tension: 0.3,
+        pointRadius: 0,
+      });
+      
+      if (aggregateChart) { aggregateChart.destroy(); }
+      aggregateChart = new Chart(ctx, {
+        type: 'line',
+        data: {
+          labels: labels,
+          datasets: datasets,
+        },
+        options: {
+          responsive: true,
+          animation: {
+            duration: 1500,
+            easing: 'easeInOutQuart',
+          },
+          plugins: {
+            legend: { display: true, position: 'top' }
+          },
+          scales: {
+            x: {
+              title: { display: true, text: 'Frame Index', color: '#dcdcdc' },
+              ticks: { color: '#dcdcdc' },
+              grid: { color: '#444' }
+            },
+            y: {
+              title: { display: true, text: 'Y Coordinate', color: '#dcdcdc' },
+              ticks: { color: '#dcdcdc' },
+              grid: { color: '#444' }
+            }
+          }
+        }
+      });
+    }
+    
+    // 個別 Landmark 分析グラフの生成（x, y, z 各軸）
+    function createLandmarkChart(labels, landmarksXYZData, landmarkIndex) {
+      const ctx = document.getElementById('landmarkChart').getContext('2d');
+      let datasetX = {
+        label: 'X Coordinate',
+        data: landmarksXYZData[landmarkIndex].x,
+        borderColor: '#FF6384',
+        backgroundColor: '#FF6384',
+        fill: false,
+        tension: 0.3,
+      };
+      let datasetY = {
+        label: 'Y Coordinate',
+        data: landmarksXYZData[landmarkIndex].y,
+        borderColor: '#36A2EB',
+        backgroundColor: '#36A2EB',
+        fill: false,
+        tension: 0.3,
+      };
+      let datasetZ = {
+        label: 'Z Coordinate',
+        data: landmarksXYZData[landmarkIndex].z,
+        borderColor: '#FFCE56',
+        backgroundColor: '#FFCE56',
+        fill: false,
+        tension: 0.3,
+      };
+      
+      if (landmarkChart) { landmarkChart.destroy(); }
+      landmarkChart = new Chart(ctx, {
+        type: 'line',
+        data: {
+          labels: labels,
+          datasets: [datasetX, datasetY, datasetZ],
+        },
+        options: {
+          responsive: true,
+          animation: {
+            duration: 1500,
+            easing: 'easeInOutQuart',
+          },
+          plugins: {
+            legend: { display: true, position: 'top' }
+          },
+          scales: {
+            x: {
+              title: { display: true, text: 'Frame Index', color: '#dcdcdc' },
+              ticks: { color: '#dcdcdc' },
+              grid: { color: '#444' }
+            },
+            y: {
+              title: { display: true, text: 'Coordinate Value', color: '#dcdcdc' },
+              ticks: { color: '#dcdcdc' },
+              grid: { color: '#444' }
+            }
+          }
+        }
+      });
+    }
+    
+    // Landmark 選択時に個別グラフ更新
+    function updateLandmarkChart() {
+      const landmarkIndex = parseInt(document.getElementById('landmarkSelect').value);
+      const numFrames = framesData.length;
+      let labels = [];
+      let landmarksXYZData = Array.from({length: 33}, () => ({ x: [], y: [], z: [] }));
+      for (let i = 0; i < numFrames; i++) {
+        labels.push(i);
+        let lm = framesData[i].landmarks;
+        if (Array.isArray(lm) && lm.length > 0 && Array.isArray(lm[0])) { lm = lm[0]; }
+        for (let j = 0; j < 33; j++) {
+          if (lm[j]) {
+            landmarksXYZData[j].x.push(lm[j].x);
+            landmarksXYZData[j].y.push(lm[j].y);
+            landmarksXYZData[j].z.push(lm[j].z);
+          } else {
+            landmarksXYZData[j].x.push(null);
+            landmarksXYZData[j].y.push(null);
+            landmarksXYZData[j].z.push(null);
+          }
+        }
+      }
+      createLandmarkChart(labels, landmarksXYZData, landmarkIndex);
+    }
+    
+    // 散布図（Scatter Chart）の生成：指定フレームの各 Landmark の (x, y) を表示
+    function createScatterChart(frameIndex, landmarks) {
+      const ctx = document.getElementById('scatterChart').getContext('2d');
+      // もし landmarks が 2 重配列なら最初の配列を利用
+      if (Array.isArray(landmarks) && landmarks.length > 0 && Array.isArray(landmarks[0])) {
+        landmarks = landmarks[0];
+      }
+      let scatterData = [];
+      for (let i = 0; i < 33; i++) {
+        if (landmarks[i]) {
+          scatterData.push({
+            x: landmarks[i].x,
+            y: landmarks[i].y,
+            label: 'LM ' + i
+          });
+        }
+      }
+      if (scatterChart) { scatterChart.destroy(); }
+      scatterChart = new Chart(ctx, {
+        type: 'scatter',
+        data: {
+          datasets: [{
+            label: 'Landmark Positions',
+            data: scatterData,
+            backgroundColor: '#36A2EB',
+          }]
+        },
+        options: {
+          responsive: true,
+          animation: {
+            duration: 1500,
+            easing: 'easeInOutQuart',
+          },
+          plugins: {
+            tooltip: {
+              callbacks: {
+                label: function(context) {
+                  let label = context.raw.label || '';
+                  return label + ': (' + context.raw.x.toFixed(2) + ', ' + context.raw.y.toFixed(2) + ')';
+                }
+              }
+            }
+          },
+          scales: {
+            x: {
+              title: { display: true, text: 'X Coordinate', color: '#dcdcdc' },
+              ticks: { color: '#dcdcdc' },
+              grid: { color: '#444' }
+            },
+            y: {
+              title: { display: true, text: 'Y Coordinate', color: '#dcdcdc' },
+              ticks: { color: '#dcdcdc' },
+              grid: { color: '#444' }
+            }
+          }
+        }
+      });
+    }
+    
+    // フレーム選択時の散布図更新
+    function updateScatterChart() {
+      const frameIndex = parseInt(document.getElementById('frameSelect').value);
+      let landmarks = framesData[frameIndex].landmarks;
+      createScatterChart(frameIndex, landmarks);
+    }
+    
+    // 特徴的な瞬間（平均 Y の変動が大きいフレーム）をテーブルに表示
+    function updateMomentsTable(avgYData) {
+      const tbody = document.getElementById('momentsTable').querySelector('tbody');
+      tbody.innerHTML = '';
+      const threshold = 0.05; // 変動の閾値（任意調整可能）
+      for (let i = 1; i < avgYData.length; i++) {
+        let delta = Math.abs(avgYData[i] - avgYData[i - 1]);
+        if (delta > threshold) {
+          let tr = document.createElement('tr');
+          let tdFrame = document.createElement('td');
+          tdFrame.textContent = i;
+          let tdAvg = document.createElement('td');
+          tdAvg.textContent = avgYData[i].toFixed(3);
+          let tdDelta = document.createElement('td');
+          tdDelta.textContent = delta.toFixed(3);
+          tr.appendChild(tdFrame);
+          tr.appendChild(tdAvg);
+          tr.appendChild(tdDelta);
+          tbody.appendChild(tr);
+        }
+      }
+    }
+    
+    // JSON ファイル読み込みイベント
+    document.getElementById('jsonFile').addEventListener('change', function(event) {
+      const file = event.target.files[0];
+      if (file) {
+        const reader = new FileReader();
+        reader.onload = function(e) {
+          try {
+            const data = JSON.parse(e.target.result);
+            processData(data);
+            initLandmarkSelect();
+          } catch (error) {
+            alert('JSON parsing error: ' + error);
+          }
+        }
+        reader.readAsText(file);
+      }
+    });
+  </script>
+</body>
+</html>
