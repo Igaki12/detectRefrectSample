@@ -1,0 +1,539 @@
+<!DOCTYPE html>
+<html lang="ja">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>バドミントン動作分析アプリ</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        /* カスタムCSS */
+        body {
+            font-family: 'Inter', 'Helvetica Neue', Arial, sans-serif;
+        }
+
+        /* スライダーのつまみのスタイル */
+        input[type="range"]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            appearance: none;
+            width: 20px;
+            height: 20px;
+            background: #fb923c; /* orange-400 */
+            cursor: pointer;
+            border-radius: 50%;
+            border: 2px solid white;
+            box-shadow: 0 0 2px rgba(0,0,0,0.3);
+        }
+
+        input[type="range"]::-moz-range-thumb {
+            width: 18px; /* Firefoxはborderを内側に描画するため少し小さく */
+            height: 18px;
+            background: #fb923c;
+            cursor: pointer;
+            border-radius: 50%;
+            border: 2px solid white;
+            box-shadow: 0 0 2px rgba(0,0,0,0.3);
+        }
+
+        .analysis-canvas {
+            border: 1px solid #e5e7eb; /* gray-200 */
+            background-color: #f9fafb; /* gray-50 */
+        }
+
+        /* ユーザー提供のスタイルを参考に調整 */
+        .container {
+            max-width: 900px; /* 少し広げる */
+        }
+
+        h1, h2, h3 {
+            text-shadow: 1px 1px 2px rgba(0, 0, 0, 0.1);
+        }
+    </style>
+</head>
+
+<body class="bg-gradient-to-br from-orange-100 via-amber-100 to-yellow-100 text-gray-800 p-4 min-h-screen flex items-center justify-center">
+    <div class="container mx-auto bg-white bg-opacity-70 p-6 rounded-xl shadow-2xl w-full">
+        <header class="text-center mb-8">
+            <h1 class="text-4xl font-bold text-orange-600">バドミントン動作分析</h1>
+            <p class="text-gray-600 mt-1">動画から選手の動きを捉え、軌跡とヒートマップで可視化します。</p>
+        </header>
+
+        <!-- Section 1: Video Upload and Display -->
+        <section class="mb-8 p-4 border border-orange-200 rounded-lg bg-white/50">
+            <h2 class="text-2xl font-semibold mb-3 text-orange-500">1. 動画の準備</h2>
+            <input type="file" id="fileInput" accept="video/*" class="block w-full text-sm text-slate-500
+              file:mr-4 file:py-2 file:px-4
+              file:rounded-lg file:border-0
+              file:text-sm file:font-semibold
+              file:bg-orange-100 file:text-orange-700
+              hover:file:bg-orange-200 disabled:opacity-50 transition-colors" disabled>
+            <p id="loadingTxt" class="text-sm text-gray-500 mt-2">AIモデルを読み込んでいます... 初回は数秒～数十秒かかることがあります。</p>
+            
+            <div class="mt-4 grid grid-cols-1 md:grid-cols-2 gap-4 items-start">
+                <div>
+                    <h3 class="text-lg font-medium text-gray-700 mb-1">オリジナル動画</h3>
+                    <video id="video" controls class="w-full rounded-md shadow-md aspect-video hidden bg-gray-200"></video>
+                </div>
+                <div>
+                    <h3 class="text-lg font-medium text-gray-700 mb-1">姿勢推定オーバーレイ</h3>
+                    <canvas id="poseCanvas" class="w-full rounded-md shadow-md aspect-video hidden bg-gray-200"></canvas>
+                </div>
+            </div>
+        </section>
+
+        <!-- Section 2: Recording Controls -->
+        <section class="mb-8 p-4 border border-orange-200 rounded-lg text-center bg-white/50">
+            <h2 class="text-2xl font-semibold mb-3 text-orange-500">2. 録画と座標取得</h2>
+            <button id="startButton" class="bg-orange-500 hover:bg-orange-600 text-white font-bold py-3 px-6 rounded-lg shadow-md disabled:opacity-50 transition-transform hover:scale-105" disabled>録画開始</button>
+            <button id="stopButton" class="bg-red-500 hover:bg-red-600 text-white font-bold py-3 px-6 rounded-lg shadow-md disabled:opacity-50 ml-2 transition-transform hover:scale-105" disabled>録画停止</button>
+            <a id="downloadLink" href="#" download="badminton_analysis.webm" class="hidden mt-4 inline-block bg-green-500 hover:bg-green-600 text-white font-bold py-3 px-6 rounded-lg shadow-md transition-transform hover:scale-105">録画をダウンロード</a>
+        </section>
+
+        <!-- Section 3: Movement Analysis -->
+        <section id="analysisSection" class="mb-6 p-4 border border-orange-200 rounded-lg hidden bg-white/50">
+            <h2 class="text-2xl font-semibold mb-3 text-orange-500">3. 移動分析結果</h2>
+            <button id="analyzeButton" class="bg-blue-500 hover:bg-blue-600 text-white font-bold py-3 px-6 rounded-lg shadow-md w-full mb-4 transition-transform hover:scale-105">移動分析を開始・更新</button>
+
+            <div id="visualizationControls" class="mt-4 hidden">
+                <div class="mb-4">
+                    <label for="timeSlider" class="block mb-1 text-sm font-medium text-gray-700">表示する時間範囲 (スライダーで調整):</label>
+                    <input type="range" id="timeSlider" min="0" max="100" value="100" step="0.1" class="w-full h-3 bg-orange-200 rounded-lg appearance-none cursor-pointer">
+                    <div class="flex justify-between text-xs text-gray-500 mt-1">
+                        <span id="sliderMinTime">0.0s</span>
+                        <span id="sliderCurrentTimeLabel" class="font-semibold">現在: <span id="sliderCurrentTime">0.0s</span></span>
+                        <span id="sliderMaxTime">0.0s</span>
+                    </div>
+                </div>
+
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mt-4">
+                    <div>
+                        <h3 class="text-xl font-semibold mb-2 text-orange-500">移動軌跡</h3>
+                        <p class="text-xs text-gray-500 mb-1">青: 左足首, 赤: 右足首</p>
+                        <canvas id="trajectoryCanvas" class="w-full aspect-video analysis-canvas rounded-md shadow"></canvas>
+                    </div>
+                    <div>
+                        <h3 class="text-xl font-semibold mb-2 text-orange-500">ヒートマップ</h3>
+                        <p class="text-xs text-gray-500 mb-1">滞在頻度が高いほど赤く表示</p>
+                        <canvas id="heatmapCanvas" class="w-full aspect-video analysis-canvas rounded-md shadow"></canvas>
+                    </div>
+                </div>
+            </div>
+        </section>
+    </div>
+
+    <script type="module">
+        import {
+            PoseLandmarker,
+            FilesetResolver,
+            DrawingUtils
+        } from "https://cdn.skypack.dev/@mediapipe/tasks-vision@0.10.10"; // Updated to a recent stable version
+
+        // DOM Elements
+        const fileInput = document.getElementById('fileInput');
+        const video = document.getElementById('video');
+        const poseCanvas = document.getElementById('poseCanvas');
+        const startButton = document.getElementById('startButton');
+        const stopButton = document.getElementById('stopButton');
+        const downloadLink = document.getElementById('downloadLink');
+        const loadingTxt = document.getElementById('loadingTxt'); // Used for status and error messages
+        const analysisSection = document.getElementById('analysisSection');
+        const analyzeButton = document.getElementById('analyzeButton');
+        const visualizationControls = document.getElementById('visualizationControls');
+        const timeSlider = document.getElementById('timeSlider');
+        const sliderMinTime = document.getElementById('sliderMinTime');
+        const sliderCurrentTime = document.getElementById('sliderCurrentTime');
+        const sliderMaxTime = document.getElementById('sliderMaxTime');
+        const trajectoryCanvas = document.getElementById('trajectoryCanvas');
+        const heatmapCanvas = document.getElementById('heatmapCanvas');
+
+        // Canvas Contexts
+        let ctxPose = poseCanvas.getContext('2d');
+        let ctxTrajectory = trajectoryCanvas.getContext('2d');
+        let ctxHeatmap = heatmapCanvas.getContext('2d');
+        
+        // MediaRecorder & PoseLandmarker
+        let mediaRecorder;
+        let recordedChunks = [];
+        let poseLandmarker = null;
+        let drawingUtilsPose = null; // For pose canvas
+        let runningMode = 'VIDEO';
+        let lastVideoTime = -1;
+        let anklePositions = []; // To store {time, leftAnkle: {x,y}, rightAnkle: {x,y}}
+        let stream = null; // Explicitly initialize stream
+
+        const HEATMAP_GRID_SIZE = 25; // Grid cells for heatmap (e.g., 20x20)
+        let videoDuration = 0;
+
+        /**
+         * Initialize PoseLandmarker
+         */
+        async function initPoseLandmarker() {
+            try {
+                const vision = await FilesetResolver.forVisionTasks(
+                    "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.10/wasm"
+                );
+                poseLandmarker = await PoseLandmarker.createFromOptions(vision, {
+                    baseOptions: {
+                        modelAssetPath: "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task",
+                        delegate: "GPU"
+                    },
+                    runningMode: runningMode,
+                    numPoses: 1 // Assuming one player is the main focus
+                });
+                console.log("PoseLandmarker initialized");
+                loadingTxt.textContent = "モデル読み込み完了。動画を選択してください。";
+                fileInput.disabled = false;
+            } catch (err) {
+                console.error("Error initializing PoseLandmarker:", err);
+                loadingTxt.textContent = "モデル読み込みに失敗しました。ページをリロードしてください。";
+            }
+        }
+
+        initPoseLandmarker();
+
+        /**
+         * Handle file input change
+         */
+        fileInput.addEventListener('change', (event) => {
+            const file = event.target.files[0];
+            if (!file) return;
+
+            const fileURL = URL.createObjectURL(file);
+            video.src = fileURL;
+            video.style.display = 'block';
+            poseCanvas.style.display = 'block';
+            
+            video.onloadedmetadata = () => {
+                videoDuration = video.duration;
+                // Set canvas dimensions based on video
+                [poseCanvas, trajectoryCanvas, heatmapCanvas].forEach(cvs => {
+                    cvs.width = video.videoWidth;
+                    cvs.height = video.videoHeight;
+                });
+                drawingUtilsPose = new DrawingUtils(ctxPose);
+                startButton.disabled = false;
+                // Reset analysis section if a new video is loaded
+                analysisSection.classList.add('hidden');
+                visualizationControls.classList.add('hidden');
+                anklePositions = [];
+                recordedChunks = [];
+                downloadLink.classList.add('hidden');
+                loadingTxt.textContent = "動画の準備ができました。録画を開始できます。";
+            };
+            video.onerror = () => {
+                console.error("Error loading video file.");
+                loadingTxt.textContent = "エラー: 動画ファイルの読み込みに失敗しました。";
+            }
+        });
+
+        /**
+         * Main drawing loop for pose estimation
+         */
+        async function drawFrame() {
+            // If video is paused, ended, or not ready, do not draw
+            if (!video || video.paused || video.ended || video.readyState < 2 /* HAVE_CURRENT_DATA */) {
+                requestAnimationFrame(drawFrame); // Still request next frame to keep loop running if paused
+                return;
+            }
+            
+            // Draw video frame onto pose canvas
+            ctxPose.clearRect(0, 0, poseCanvas.width, poseCanvas.height);
+            ctxPose.drawImage(video, 0, 0, poseCanvas.width, poseCanvas.height);
+
+            if (poseLandmarker && video.currentTime !== lastVideoTime) {
+                const startTimeMs = performance.now();
+                lastVideoTime = video.currentTime;
+
+                poseLandmarker.detectForVideo(video, startTimeMs, (result) => {
+                    if (result.landmarks && result.landmarks.length > 0) {
+                        const landmarks = result.landmarks[0]; // Assuming one person
+                        
+                        // Draw landmarks and connections on poseCanvas
+                        if (drawingUtilsPose) {
+                            drawingUtilsPose.drawConnectors(landmarks, PoseLandmarker.POSE_CONNECTIONS, { color: '#FF8A65', lineWidth: 2 }); // Deep Orange Lighten-2
+                            drawingUtilsPose.drawLandmarks(landmarks, { color: '#FFAB91', radius: 3 }); // Deep Orange Lighten-3
+                        }
+
+                        // Store ankle positions if recording
+                        if (mediaRecorder && mediaRecorder.state === "recording") {
+                            const leftAnkle = landmarks[27]; // LEFT_ANKLE index
+                            const rightAnkle = landmarks[28]; // RIGHT_ANKLE index
+                            if (leftAnkle && rightAnkle) {
+                                anklePositions.push({
+                                    time: video.currentTime,
+                                    leftAnkle: { x: leftAnkle.x, y: leftAnkle.y, visibility: leftAnkle.visibility },
+                                    rightAnkle: { x: rightAnkle.x, y: rightAnkle.y, visibility: rightAnkle.visibility }
+                                });
+                            }
+                        }
+                    }
+                });
+            }
+            requestAnimationFrame(drawFrame);
+        }
+        
+        video.addEventListener('play', () => {
+            lastVideoTime = -1; // Reset lastVideoTime on play
+            requestAnimationFrame(drawFrame);
+        });
+        
+        video.addEventListener('ended', () => {
+            if (mediaRecorder && mediaRecorder.state === 'recording') {
+                stopRecording();
+            }
+        });
+
+
+        /**
+         * Start Recording
+         */
+        startButton.addEventListener('click', () => {
+            // Try to get stream from canvas first
+            if (poseCanvas.captureStream) {
+                stream = poseCanvas.captureStream(30); // 30 FPS
+            } else if (video.captureStream) { // Fallback to video element directly if canvas capture fails
+                 stream = video.captureStream(30);
+            } else if (video.mozCaptureStream) { // Firefox specific
+                stream = video.mozCaptureStream(30);
+            }
+            else {
+                console.error("captureStream not supported by this browser on canvas or video.");
+                loadingTxt.textContent = "エラー: お使いのブラウザは録画機能に対応していません。";
+                return;
+            }
+
+            if (!stream) {
+                 console.error("ストリームの取得に失敗しました。");
+                 loadingTxt.textContent = "エラー: 録画ストリームの取得に失敗しました。";
+                 return;
+            }
+
+            video.play(); // Ensure video is playing
+
+            anklePositions = []; // Reset positions for new recording
+            recordedChunks = [];
+            try {
+                mediaRecorder = new MediaRecorder(stream, { mimeType: 'video/webm; codecs=vp9' });
+            } catch (e) {
+                console.error("Error creating MediaRecorder:", e);
+                loadingTxt.textContent = "エラー: MediaRecorderの作成に失敗しました。MIMEタイプがサポートされていない可能性があります。";
+                // Try with a more common MIME type as a fallback
+                try {
+                    mediaRecorder = new MediaRecorder(stream, { mimeType: 'video/webm' });
+                } catch (e2) {
+                    console.error("Error creating MediaRecorder with fallback MIME type:", e2);
+                    loadingTxt.textContent = "エラー: MediaRecorderの作成に失敗しました。録画を開始できません。";
+                    return;
+                }
+            }
+
+
+            mediaRecorder.ondataavailable = (event) => {
+                if (event.data && event.data.size > 0) {
+                    recordedChunks.push(event.data);
+                }
+            };
+
+            mediaRecorder.onstop = () => {
+                const blob = new Blob(recordedChunks, { type: 'video/webm' });
+                const url = URL.createObjectURL(blob);
+                downloadLink.href = url;
+                downloadLink.classList.remove('hidden');
+                
+                analysisSection.classList.remove('hidden');
+                analyzeButton.disabled = false;
+                visualizationControls.classList.add('hidden'); 
+
+                if (anklePositions.length > 0) {
+                    const maxTime = anklePositions[anklePositions.length - 1].time;
+                    timeSlider.max = maxTime.toFixed(1); // Ensure max is a string representation of a number
+                    timeSlider.value = maxTime.toFixed(1);
+                    sliderMaxTime.textContent = `${maxTime.toFixed(1)}s`;
+                    sliderCurrentTime.textContent = `${maxTime.toFixed(1)}s`;
+                } else {
+                     timeSlider.max = videoDuration.toFixed(1);
+                     timeSlider.value = videoDuration.toFixed(1);
+                     sliderMaxTime.textContent = `${videoDuration.toFixed(1)}s`;
+                     sliderCurrentTime.textContent = `${videoDuration.toFixed(1)}s`;
+                }
+                sliderMinTime.textContent = "0.0s";
+                loadingTxt.textContent = "録画が完了しました。移動分析を開始できます。";
+            };
+            
+            mediaRecorder.onerror = (event) => {
+                console.error("MediaRecorder error:", event.error);
+                loadingTxt.textContent = `エラー: 録画中にエラーが発生しました: ${event.error.name}`;
+                stopRecording(); // Try to clean up
+            };
+
+            mediaRecorder.start();
+            console.log('Recording started');
+            loadingTxt.textContent = "録画中です...";
+            startButton.disabled = true;
+            stopButton.disabled = false;
+            downloadLink.classList.add('hidden');
+            analyzeButton.disabled = true; 
+        });
+
+        /**
+         * Stop Recording
+         */
+        function stopRecording() {
+            if (mediaRecorder && mediaRecorder.state === 'recording') {
+                mediaRecorder.stop();
+                console.log('Recording stopped');
+            }
+            // Stop all tracks on the stream to release camera/canvas resources
+            if (stream) {
+                stream.getTracks().forEach(track => track.stop());
+                stream = null; 
+            }
+            startButton.disabled = false;
+            stopButton.disabled = true;
+            // loadingTxt.textContent will be updated in mediaRecorder.onstop or if error occurs
+        }
+        stopButton.addEventListener('click', stopRecording);
+
+
+        /**
+         * Analyze Button Click
+         */
+        analyzeButton.addEventListener('click', () => {
+            if (anklePositions.length === 0) {
+                console.warn("分析する足首の座標データがありません。録画を行ってください。");
+                loadingTxt.textContent = "情報: 分析データがありません。先に動画を録画し、足首の座標を取得してください。";
+                return;
+            }
+            visualizationControls.classList.remove('hidden');
+            drawAnalysis(parseFloat(timeSlider.value));
+            loadingTxt.textContent = "移動分析結果を表示しています。";
+        });
+
+        /**
+         * Time Slider Input Change
+         */
+        timeSlider.addEventListener('input', () => {
+            const currentTime = parseFloat(timeSlider.value);
+            sliderCurrentTime.textContent = `${currentTime.toFixed(1)}s`;
+            if (!visualizationControls.classList.contains('hidden')) { 
+                 drawAnalysis(currentTime);
+            }
+        });
+        
+        /**
+         * Draw Analysis (Trajectory and Heatmap)
+         */
+        function drawAnalysis(currentTime) {
+            ctxTrajectory.clearRect(0, 0, trajectoryCanvas.width, trajectoryCanvas.height);
+            ctxHeatmap.clearRect(0, 0, heatmapCanvas.width, heatmapCanvas.height);
+
+            const filteredPositions = anklePositions.filter(p => p.time <= currentTime && (p.leftAnkle.visibility > 0.5 || p.rightAnkle.visibility > 0.5));
+            
+            if (filteredPositions.length > 0) {
+                drawTrajectory(filteredPositions);
+                drawHeatmap(filteredPositions);
+            } else {
+                ctxTrajectory.font = "16px Arial";
+                ctxTrajectory.fillStyle = "gray";
+                ctxTrajectory.textAlign = "center";
+                ctxTrajectory.fillText("この時間範囲に表示できる軌跡データがありません。", trajectoryCanvas.width / 2, trajectoryCanvas.height / 2);
+
+                ctxHeatmap.font = "16px Arial";
+                ctxHeatmap.fillStyle = "gray";
+                ctxHeatmap.textAlign = "center";
+                ctxHeatmap.fillText("この時間範囲に表示できるヒートマップデータがありません。", heatmapCanvas.width / 2, heatmapCanvas.height / 2);
+            }
+        }
+
+        /**
+         * Draw Trajectory
+         */
+        function drawTrajectory(positions) {
+            ctxTrajectory.lineWidth = 2;
+            
+            // Draw Left Ankle Trajectory (Blue)
+            ctxTrajectory.strokeStyle = 'rgba(59, 130, 246, 0.8)'; // Tailwind blue-500
+            ctxTrajectory.beginPath();
+            let firstLeft = true;
+            for (const pos of positions) {
+                if (pos.leftAnkle && pos.leftAnkle.visibility > 0.5) {
+                    const x = pos.leftAnkle.x * trajectoryCanvas.width;
+                    const y = pos.leftAnkle.y * trajectoryCanvas.height;
+                    if (firstLeft) {
+                        ctxTrajectory.moveTo(x, y);
+                        firstLeft = false;
+                    } else {
+                        ctxTrajectory.lineTo(x, y);
+                    }
+                } else { 
+                    firstLeft = true;
+                }
+            }
+            ctxTrajectory.stroke();
+
+            // Draw Right Ankle Trajectory (Red)
+            ctxTrajectory.strokeStyle = 'rgba(239, 68, 68, 0.8)'; // Tailwind red-500
+            ctxTrajectory.beginPath();
+            let firstRight = true;
+            for (const pos of positions) {
+                 if (pos.rightAnkle && pos.rightAnkle.visibility > 0.5) {
+                    const x = pos.rightAnkle.x * trajectoryCanvas.width;
+                    const y = pos.rightAnkle.y * trajectoryCanvas.height;
+                    if (firstRight) {
+                        ctxTrajectory.moveTo(x, y);
+                        firstRight = false;
+                    } else {
+                        ctxTrajectory.lineTo(x, y);
+                    }
+                } else {
+                    firstRight = true;
+                }
+            }
+            ctxTrajectory.stroke();
+        }
+
+        /**
+         * Draw Heatmap (Simple Implementation)
+         */
+        function drawHeatmap(positions) {
+            console.log("Drawing heatmap with positions:");
+            console.log(positions); 
+            const gridW = heatmapCanvas.width / HEATMAP_GRID_SIZE;
+            const gridH = heatmapCanvas.height / HEATMAP_GRID_SIZE;
+            const heatmapData = Array(HEATMAP_GRID_SIZE).fill(null).map(() => Array(HEATMAP_GRID_SIZE).fill(0));
+            let maxHits = 0;
+
+            for (const pos of positions) {
+                if (pos.leftAnkle && pos.leftAnkle.visibility > 0.5) {
+                    const gridX = Math.min(HEATMAP_GRID_SIZE - 1, Math.max(0, Math.floor(pos.leftAnkle.x * HEATMAP_GRID_SIZE)));
+                    const gridY = Math.min(HEATMAP_GRID_SIZE - 1, Math.max(0, Math.floor(pos.leftAnkle.y * HEATMAP_GRID_SIZE)));
+                    heatmapData[gridY][gridX]++;
+                    if (heatmapData[gridY][gridX] > maxHits) maxHits = heatmapData[gridY][gridX];
+                }
+                if (pos.rightAnkle && pos.rightAnkle.visibility > 0.5) {
+                    const gridX = Math.min(HEATMAP_GRID_SIZE - 1, Math.max(0, Math.floor(pos.rightAnkle.x * HEATMAP_GRID_SIZE)));
+                    const gridY = Math.min(HEATMAP_GRID_SIZE - 1, Math.max(0, Math.floor(pos.rightAnkle.y * HEATMAP_GRID_SIZE)));
+                    heatmapData[gridY][gridX]++;
+                    if (heatmapData[gridY][gridX] > maxHits) maxHits = heatmapData[gridY][gridX];
+                }
+            }
+
+            if (maxHits === 0) return; 
+
+            for (let y = 0; y < HEATMAP_GRID_SIZE; y++) {
+                for (let x = 0; x < HEATMAP_GRID_SIZE; x++) {
+                    if (heatmapData[y][x] > 0) {
+                        const intensity = heatmapData[y][x] / maxHits;
+                        const r = Math.floor(255 * Math.min(1, intensity * 1.5)); // Emphasize red for higher intensity
+                        const g = Math.floor(255 * Math.max(0, (1 - intensity * 1.5))); // Reduce green faster
+                        const b = 0; // Keep blue at 0 for yellow to red
+                        ctxHeatmap.fillStyle = `rgba(${r}, ${g}, ${b}, ${Math.max(0.1, intensity * 0.8)})`; // Ensure minimum opacity
+                        ctxHeatmap.fillRect(x * gridW, y * gridH, gridW, gridH);
+                    }
+                }
+            }
+        }
+
+    </script>
+</body>
+</html>
