@@ -1,0 +1,896 @@
+<!DOCTYPE html>
+<html lang="ja">
+
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>バドミントン AI姿勢推定 &amp; 移動軌跡可視化 (ヒートマップ・スライダー対応)</title>
+    <style>
+        /* 全体のリセット */
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        /* Body全体のスタイル */
+        body {
+            font-family: 'Helvetica Neue', Arial, sans-serif;
+            background: linear-gradient(135deg, #e0f2f1, #b2dfdb); /* 爽やかな緑系グラデーション */
+            color: #333;
+            text-align: center;
+            padding: 20px;
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+
+        /* コンテンツを中央にまとめるラッパー */
+        .container {
+            max-width: 950px; /* 少し幅を広げる */
+            width: 100%;
+            background: rgba(255, 255, 255, 0.85); /* 背景の透明度を調整 */
+            padding: 20px;
+            border-radius: 15px; /* 角丸を少し大きく */
+            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.1); /* 影を少し強調 */
+        }
+
+        /* 見出し */
+        h1 {
+            font-size: 2rem;
+            margin-bottom: 20px;
+            color: #00796b; /* テーマカラー */
+            text-shadow: 1px 1px 2px rgba(0, 0, 0, 0.1);
+        }
+
+        h2 {
+            font-size: 1.5rem;
+            margin-bottom: 10px; /* 間隔を調整 */
+            color: #004d40; /*濃い緑 */
+            text-shadow: 1px 1px 2px rgba(0, 0, 0, 0.1);
+        }
+
+        p {
+            margin-bottom: 15px; /* 間隔を調整 */
+            line-height: 1.6;
+        }
+
+        /* ファイル入力 */
+        input[type="file"] {
+            display: inline-block;
+            margin: 15px auto;
+            padding: 12px 18px; /* パディング調整 */
+            font-size: 1rem;
+            font-weight: bold;
+            background-color: #00796b; /* テーマカラー */
+            border: none;
+            border-radius: 8px; /* 角丸調整 */
+            color: #fff;
+            cursor: pointer;
+            transition: background-color 0.3s ease, transform 0.3s ease;
+        }
+
+        input[type="file"]:hover {
+            background-color: #004d40; /* ホバー時の色を濃く */
+            transform: scale(1.05);
+        }
+
+        input[type="file"]:disabled {
+            background-color: #ccc;
+            cursor: not-allowed;
+            border: none;
+        }
+
+        /* 動画とCanvasのコンテナ */
+        .media-container {
+            display: flex;
+            flex-wrap: wrap; /* 折り返しを許可 */
+            justify-content: space-around; /* 要素間のスペースを均等に */
+            align-items: flex-start; /* 上揃え */
+            gap: 20px; /* 要素間の隙間 */
+            margin-bottom: 20px;
+        }
+
+        .video-canvas-wrapper, .court-canvas-wrapper {
+            flex: 1 1 420px; /* フレックスベース、成長、縮小、最小幅 */
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+
+
+        /* 動画とCanvasのスタイル */
+        video,
+        #canvas { /* 姿勢推定用Canvas */
+            max-width: 100%;
+            height: auto; /* 高さを自動に */
+            border: 3px solid #00796b; /* テーマカラーの枠線 */
+            border-radius: 10px;
+            margin: 10px auto;
+            background-color: #f0f0f0; /* 背景色 */
+        }
+
+        #courtCanvas { /* コート可視化用Canvas */
+            width: 305px; /* コートの幅の比率 (6.1m) */
+            height: 335px; /* コートの半分の長さの比率 (6.7m) */
+            border: 2px solid #004d40;
+            border-radius: 8px;
+            margin: 10px auto;
+            background-color: #dcedc8; /* 薄い緑色のコート */
+        }
+
+        /* コントロールセクション */
+        .controls {
+            margin: 15px 0;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 10px;
+        }
+        .controls label {
+            font-size: 0.9em;
+            margin-right: 5px;
+        }
+        #timeSlider {
+            width: 80%;
+            max-width: 500px;
+            cursor: pointer;
+        }
+        #currentTimeDisplay {
+            font-size: 0.9em;
+            color: #004d40;
+            min-width: 100px; /* 表示幅を確保 */
+        }
+         .slider-container {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            width: 100%;
+            gap: 10px;
+        }
+
+
+        /* 録画制御ボタン */
+        .button-group {
+            margin-top: 10px;
+        }
+        button {
+            font-size: 1rem; /* サイズ調整 */
+            font-weight: bold;
+            padding: 10px 20px;
+            margin: 8px; /* 間隔調整 */
+            background-color: #00796b; /* テーマカラー */
+            border: none;
+            border-radius: 8px;
+            color: #fff;
+            cursor: pointer;
+            transition: background-color 0.3s ease, transform 0.3s ease;
+        }
+
+        button:disabled {
+            background-color: #9e9e9e; /* 無効時の色 */
+            opacity: 0.7;
+            cursor: not-allowed;
+        }
+
+        button:hover:not(:disabled) {
+            background-color: #004d40; /* ホバー時の色を濃く */
+            transform: scale(1.05);
+        }
+
+        /* ダウンロードリンク */
+        #downloadLink {
+            display: none;
+            margin: 10px auto;
+            font-size: 1rem;
+            font-weight: bold;
+            padding: 10px 20px;
+            background: linear-gradient(45deg, #00796b, #004d40); /* グラデーション */
+            border: none;
+            border-radius: 8px;
+            color: #fff;
+            text-decoration: none;
+            animation: pulse 2s infinite;
+        }
+
+        #downloadLink:hover {
+            transform: scale(1.05);
+        }
+
+        /* 足首データ表示エリア */
+        #ankleDataDisplayContainer {
+            margin-top: 20px;
+            width: 100%;
+        }
+        #ankleDataDisplay {
+            padding: 15px;
+            background-color: #e8f5e9; /* 薄い緑の背景 */
+            border-radius: 8px;
+            border: 1px solid #c8e6c9; /* 緑系の枠線 */
+            max-height: 150px; /* 高さを少し調整 */
+            overflow-y: auto;
+            text-align: left;
+            font-family: monospace;
+            font-size: 0.85em; /* 文字サイズ調整 */
+            line-height: 1.4;
+        }
+         #ankleDataDisplay h3 {
+            margin-top:0;
+            color: #004d40;
+         }
+
+
+        /* レスポンシブ対応 */
+        @media (max-width: 768px) {
+            .media-container {
+                flex-direction: column; /* 縦並びに変更 */
+                align-items: center;
+            }
+            .video-canvas-wrapper, .court-canvas-wrapper {
+                width: 100%; /* 幅を100%に */
+                max-width: 450px; /* 最大幅を設定 */
+            }
+            #courtCanvas {
+                width: 90%; /* 幅を調整 */
+                max-width: 305px; /* 最大幅は維持 */
+                height: auto;
+                aspect-ratio: 305 / 335; /* アスペクト比を維持 */
+            }
+
+            h1 {
+                font-size: 1.8rem;
+            }
+            h2 {
+                font-size: 1.3rem;
+            }
+            button,
+            input[type="file"],
+            #downloadLink {
+                font-size: 0.9rem;
+                padding: 10px 15px;
+            }
+            .controls label {
+                font-size: 0.85em;
+            }
+            #timeSlider {
+                width: 70%;
+            }
+        }
+
+        @media (max-width: 480px) {
+            h1 {
+                font-size: 1.5rem;
+            }
+            h2 {
+                font-size: 1.1rem;
+            }
+             .container {
+                padding: 15px;
+            }
+            .button-group button {
+                display: block;
+                width: calc(100% - 16px);
+                margin: 8px auto;
+            }
+            #timeSlider {
+                width: 90%;
+            }
+        }
+
+
+        /* 恒常アニメーション：パルス効果 */
+        @keyframes pulse {
+            0% {
+                transform: scale(1);
+                box-shadow: 0 0 3px rgba(0, 77, 64, 0.4);
+            }
+            50% {
+                transform: scale(1.03);
+                box-shadow: 0 0 10px rgba(0, 77, 64, 0.7);
+            }
+            100% {
+                transform: scale(1);
+                box-shadow: 0 0 3px rgba(0, 77, 64, 0.4);
+            }
+        }
+    </style>
+</head>
+
+<body>
+    <div class="container">
+        <h1>バドミントン AI姿勢推定 &amp; 移動軌跡可視化</h1>
+        <p id="loadingTxt">初回のみモジュールの読み込みに時間がかかります。しばらくお待ちください。</p>
+
+        <!-- 動画ファイルを選択 -->
+        <input type="file" id="fileInput" accept="video/*" disabled>
+        
+        <div class="controls">
+            <div class="slider-container">
+                <input type="range" id="timeSlider" min="0" value="0" step="0.1" disabled>
+                <span id="currentTimeDisplay">0.00s / 0.00s</span>
+            </div>
+            <div>
+                <label for="heatmapToggle">ヒートマップ表示:</label>
+                <input type="checkbox" id="heatmapToggle" checked>
+                 <label for="trajectoryToggle" style="margin-left:15px;">軌跡表示:</label>
+                <input type="checkbox" id="trajectoryToggle" checked>
+            </div>
+        </div>
+
+
+        <div class="media-container">
+            <div class="video-canvas-wrapper">
+                <h2>解析対象動画と姿勢</h2>
+                <!-- アップロードされた動画を表示 -->
+                <video id="video" controls style="display:none;"></video>
+                <!-- 推定結果を重ね描画するための Canvas -->
+                <canvas id="canvas"></canvas>
+            </div>
+            <div class="court-canvas-wrapper">
+                <h2>コート上の移動軌跡とヒートマップ</h2>
+                <!-- コート上の移動軌跡を描画する Canvas -->
+                <canvas id="courtCanvas"></canvas>
+            </div>
+        </div>
+
+        <div class="button-group">
+            <button id="startButton" disabled>録画開始</button>
+            <button id="stopButton" disabled>録画停止</button>
+            <a id="downloadLink" href="#" download="badminton_analysis.webm">解析動画ダウンロード</a>
+        </div>
+        
+        <div id="ankleDataDisplayContainer">
+            <div id="ankleDataDisplay">
+                <h3>足首座標データ (最初のプレイヤー)</h3>
+                <p>ここに座標が表示されます...</p>
+            </div>
+        </div>
+    </div>
+
+    <!-- 以下、Mediapipe等のスクリプト -->
+    <script type="module">
+        import {
+            PoseLandmarker,
+            FilesetResolver,
+            DrawingUtils
+        } from "https://cdn.skypack.dev/@mediapipe/tasks-vision@0.10.10";
+
+        // DOM 要素の取得
+        const fileInput = document.getElementById('fileInput');
+        const video = document.getElementById('video');
+        const canvas = document.getElementById('canvas');
+        const courtCanvas = document.getElementById('courtCanvas');
+        const startButton = document.getElementById('startButton');
+        const stopButton = document.getElementById('stopButton');
+        const downloadLink = document.getElementById('downloadLink');
+        const loadingTxt = document.getElementById('loadingTxt');
+        const ankleDataDisplay = document.getElementById('ankleDataDisplay');
+        const timeSlider = document.getElementById('timeSlider');
+        const currentTimeDisplay = document.getElementById('currentTimeDisplay');
+        const heatmapToggle = document.getElementById('heatmapToggle');
+        const trajectoryToggle = document.getElementById('trajectoryToggle');
+
+
+        // Canvas コンテキスト
+        let ctx = canvas.getContext('2d');
+        let courtCtx = courtCanvas.getContext('2d');
+
+        // MediaRecorder 関連
+        let mediaRecorder;
+        let recordedChunks = [];
+        let stream;
+
+        // PoseLandmarker 関連
+        let poseLandmarker = null;
+        let drawingUtils = null;
+        const runningMode = 'VIDEO';
+        let lastVideoTime = -1;
+        let animationFrameId = null;
+
+        // 足首座標データ保存用配列
+        let playerMovementData = []; 
+
+        // MediaPipeのランドマークインデックス
+        const LEFT_ANKLE = 27;
+        const RIGHT_ANKLE = 28;
+
+        // ヒートマップ関連
+        const HEATMAP_GRID_X = 20; // コートのX軸方向のグリッド数
+        const HEATMAP_GRID_Y = 20; // コートのY軸方向のグリッド数
+        let heatmapGrid = [];
+        let maxHeatmapValue = 0;
+
+
+        /**
+         * PoseLandmarker を初期化
+         */
+        async function initPoseLandmarker() {
+            const vision = await FilesetResolver.forVisionTasks(
+                "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.10/wasm"
+            );
+            poseLandmarker = await PoseLandmarker.createFromOptions(vision, {
+                baseOptions: {
+                    modelAssetPath: "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task",
+                    delegate: "GPU"
+                },
+                runningMode: runningMode,
+                numPoses: 2
+            });
+            console.log("PoseLandmarker initialized");
+            loadingTxt.style.display = 'none';
+            fileInput.disabled = false;
+        }
+
+        initPoseLandmarker().catch(err => {
+            console.error("Error initializing PoseLandmarker:", err);
+            loadingTxt.textContent = "エラー: モデルの読み込みに失敗しました。";
+        });
+
+        /**
+         * ヒートマップグリッドを初期化
+         */
+        function initHeatmapGrid() {
+            heatmapGrid = Array(HEATMAP_GRID_Y).fill(null).map(() => Array(HEATMAP_GRID_X).fill(0));
+            maxHeatmapValue = 0;
+        }
+
+        /**
+         * ファイル選択時の処理
+         */
+        fileInput.addEventListener('change', () => {
+            const file = fileInput.files[0];
+            if (!file) return;
+
+            playerMovementData = [];
+            initHeatmapGrid();
+            ankleDataDisplay.innerHTML = '<h3>足首座標データ (最初のプレイヤー)</h3><p>ここに座標が表示されます...</p>';
+            if (animationFrameId) cancelAnimationFrame(animationFrameId);
+            animationFrameId = null;
+            lastVideoTime = -1;
+            timeSlider.value = 0;
+            timeSlider.disabled = true;
+            currentTimeDisplay.textContent = "0.00s / 0.00s";
+
+
+            const fileURL = URL.createObjectURL(file);
+            video.src = fileURL;
+            video.style.display = 'block';
+
+            video.onloadedmetadata = () => {
+                canvas.width = video.videoWidth;
+                canvas.height = video.videoHeight;
+                if (!drawingUtils) drawingUtils = new DrawingUtils(ctx);
+                
+                timeSlider.max = video.duration;
+                timeSlider.disabled = false;
+                updateCurrentTimeDisplay();
+
+                drawCourtContent(); // 初期描画
+                startButton.disabled = false;
+                stopButton.disabled = true;
+                downloadLink.style.display = 'none';
+            };
+            video.onseeked = () => {
+                lastVideoTime = -1; // シーク後は再処理を促す
+                // playerMovementData はリセットしないでおく（スライダーで過去のデータを見れるようにするため）
+                // ただし、ヒートマップや軌跡はスライダーの位置に基づいて再描画される
+                drawCourtContent();
+            };
+        });
+
+        /**
+         * 動画再生/一時停止/終了イベント
+         */
+        video.addEventListener('play', () => {
+            if (animationFrameId) cancelAnimationFrame(animationFrameId);
+            drawFrame();
+        });
+        video.addEventListener('pause', () => {
+            if (animationFrameId) cancelAnimationFrame(animationFrameId);
+            animationFrameId = null;
+        });
+        video.addEventListener('ended', () => {
+            if (mediaRecorder && mediaRecorder.state === 'recording') stopRecording();
+            if (animationFrameId) cancelAnimationFrame(animationFrameId);
+            animationFrameId = null;
+        });
+        video.addEventListener('timeupdate', () => {
+            if (!video.paused && !video.seeking) { // スライダー操作中は更新しない
+                 timeSlider.value = video.currentTime;
+            }
+            updateCurrentTimeDisplay();
+            // リアルタイムで軌跡やヒートマップを更新したい場合はここで drawCourtContent() を呼ぶ
+            // ただし、パフォーマンスに影響する可能性があるので、スライダー操作時とフレーム処理時に限定する方が良い場合もある
+            if (video.paused) { // 一時停止中もスライダーに追従して表示更新
+                drawCourtContent();
+            }
+        });
+
+        /**
+         * スライダー操作
+         */
+        timeSlider.addEventListener('input', () => {
+            video.currentTime = parseFloat(timeSlider.value);
+            updateCurrentTimeDisplay();
+            drawCourtContent(); // スライダー操作でコート表示を更新
+        });
+
+        /**
+         * 表示トグル
+         */
+        heatmapToggle.addEventListener('change', drawCourtContent);
+        trajectoryToggle.addEventListener('change', drawCourtContent);
+
+
+        /**
+         * 毎フレームの描画処理
+         */
+        async function drawFrame() {
+            if (video.paused || video.ended) {
+                if (animationFrameId) cancelAnimationFrame(animationFrameId);
+                animationFrameId = null;
+                return;
+            }
+
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+            if (poseLandmarker && video.currentTime !== lastVideoTime) {
+                const currentFrameTime = video.currentTime;
+                // 既にその時間のデータがあるかチェック (シークバックした場合など)
+                const existingDataForCurrentTime = playerMovementData.find(d => Math.abs(d.time - currentFrameTime) < 0.05); // 誤差許容
+
+                if (!existingDataForCurrentTime || currentFrameTime > lastVideoTime) {
+                    lastVideoTime = currentFrameTime;
+                    const startTimeMs = performance.now();
+                    poseLandmarker.detectForVideo(video, startTimeMs, (result) => {
+                        ctx.save();
+                        if (result.landmarks && result.landmarks.length > 0) {
+                            const firstPlayerLandmarks = result.landmarks[0];
+                            if (drawingUtils) {
+                                drawingUtils.drawLandmarks(firstPlayerLandmarks, { radius: (data) => DrawingUtils.lerp(data.from.z, -0.15, 0.1, 5, 1), color: '#00FF00', fillColor: '#FF0000' });
+                                drawingUtils.drawConnectors(firstPlayerLandmarks, PoseLandmarker.POSE_CONNECTIONS, {color: '#FFFFFF'});
+                            }
+
+                            const leftAnkle = firstPlayerLandmarks[LEFT_ANKLE];
+                            const rightAnkle = firstPlayerLandmarks[RIGHT_ANKLE];
+
+                            if (leftAnkle && rightAnkle) {
+                                const currentAnkleData = {
+                                    time: currentFrameTime, // toFixedしない生の値
+                                    leftAnkle: { x: leftAnkle.x, y: leftAnkle.y, visibility: leftAnkle.visibility },
+                                    rightAnkle: { x: rightAnkle.x, y: rightAnkle.y, visibility: rightAnkle.visibility }
+                                };
+                                // 重複を避けて追加 (厳密には時間でソートして挿入が望ましいが、ここでは簡易的に)
+                                if (!playerMovementData.find(d => Math.abs(d.time - currentFrameTime) < 0.05)) {
+                                     playerMovementData.push(currentAnkleData);
+                                     playerMovementData.sort((a,b) => a.time - b.time); // 時系列でソート
+                                     updateAnkleDataDisplay(currentAnkleData); // 最新のものを表示
+                                     updateHeatmapGrid(currentAnkleData);
+                                }
+                            }
+                        }
+                        ctx.restore();
+                        // フレーム処理が終わった後にコート表示を更新
+                        if(!video.paused) drawCourtContent();
+                    });
+                } else {
+                     // 既にデータがある場合は、既存のデータを使って描画更新のみ行う
+                     if(!video.paused) drawCourtContent();
+                }
+            }
+            animationFrameId = requestAnimationFrame(drawFrame);
+        }
+        
+        /**
+         * 足首座標データをHTMLに表示 (最新のものを追加)
+         */
+        function updateAnkleDataDisplay(data) {
+            if(playerMovementData.length === 1 && ankleDataDisplay.getElementsByTagName('p').length > 0 && ankleDataDisplay.getElementsByTagName('p')[0].textContent.startsWith("ここに座標が")) {
+                 ankleDataDisplay.innerHTML = '<h3>足首座標データ (最初のプレイヤー)</h3>';
+            }
+            const p = document.createElement('p');
+            p.textContent = `Time: ${data.time.toFixed(2)}s - L:(${data.leftAnkle.x.toFixed(2)},${data.leftAnkle.y.toFixed(2)},v:${data.leftAnkle.visibility?.toFixed(2)}) R:(${data.rightAnkle.x.toFixed(2)},${data.rightAnkle.y.toFixed(2)},v:${data.rightAnkle.visibility?.toFixed(2)})`;
+            ankleDataDisplay.appendChild(p);
+            if (ankleDataDisplay.childElementCount > 100) { // 表示件数制限
+                ankleDataDisplay.removeChild(ankleDataDisplay.children[1]); // ヘッダー(h3)を除いて一番上を削除
+            }
+            ankleDataDisplay.scrollTop = ankleDataDisplay.scrollHeight;
+        }
+
+        /**
+         * ヒートマップグリッドの更新
+         */
+        function updateHeatmapGrid(data) {
+            // const courtX = 10, courtY = 10; // These are not used here
+            // const courtWidth = courtCanvas.width - 20; // Not used here
+            // const courtHeight = courtCanvas.height - 20; // Not used here
+
+            let targetXNorm, targetYNorm;
+            const lVis = data.leftAnkle.visibility || 0;
+            const rVis = data.rightAnkle.visibility || 0;
+            const goodVisThreshold = 0.5; // Defined locally, used locally. This is fine.
+
+            if (lVis > goodVisThreshold && rVis > goodVisThreshold) {
+                targetXNorm = (data.leftAnkle.x + data.rightAnkle.x) / 2;
+                targetYNorm = (data.leftAnkle.y + data.rightAnkle.y) / 2;
+            } else if (lVis > goodVisThreshold) {
+                targetXNorm = data.leftAnkle.x;
+                targetYNorm = data.leftAnkle.y;
+            } else if (rVis > goodVisThreshold) {
+                targetXNorm = data.rightAnkle.x;
+                targetYNorm = data.rightAnkle.y;
+            } else {
+                return; // 有効なデータなし
+            }
+            
+            // 正規化座標をグリッドインデックスに変換
+            const gridX = Math.floor(targetXNorm * HEATMAP_GRID_X);
+            const gridY = Math.floor(targetYNorm * HEATMAP_GRID_Y);
+
+            if (gridX >= 0 && gridX < HEATMAP_GRID_X && gridY >= 0 && gridY < HEATMAP_GRID_Y) {
+                heatmapGrid[gridY][gridX]++;
+                if (heatmapGrid[gridY][gridX] > maxHeatmapValue) {
+                    maxHeatmapValue = heatmapGrid[gridY][gridX];
+                }
+            }
+        }
+        
+        /**
+         * コート関連の描画をまとめて行う
+         */
+        function drawCourtContent() {
+            const currentTime = parseFloat(timeSlider.value);
+            drawCourtBase(); // 常にコートの線は描画
+            if (heatmapToggle.checked) {
+                drawHeatmapOnCourt(currentTime);
+            }
+            if (trajectoryToggle.checked) {
+                drawPlayerMovementOnCourt(currentTime);
+            }
+        }
+
+
+        /**
+         * コートの基本図形を描画
+         */
+        function drawCourtBase() {
+            courtCtx.clearRect(0, 0, courtCanvas.width, courtCanvas.height);
+            courtCtx.strokeStyle = '#333'; // 線の色を濃く
+            courtCtx.lineWidth = 1.5; // 線を少し細く
+
+            // コートの境界線 (半面)
+            courtCtx.strokeRect(10, 10, courtCanvas.width - 20, courtCanvas.height - 20); 
+
+            // ネット
+            courtCtx.beginPath();
+            courtCtx.moveTo(10, 10);
+            courtCtx.lineTo(courtCanvas.width - 10, 10);
+            courtCtx.stroke();
+
+            const singleSideLineWidth = (courtCanvas.width - 20) * 0.075; 
+            courtCtx.beginPath();
+            courtCtx.moveTo(10 + singleSideLineWidth, 10);
+            courtCtx.lineTo(10 + singleSideLineWidth, courtCanvas.height - 10);
+            courtCtx.stroke();
+
+            courtCtx.beginPath();
+            courtCtx.moveTo(courtCanvas.width - 10 - singleSideLineWidth, 10);
+            courtCtx.lineTo(courtCanvas.width - 10 - singleSideLineWidth, courtCanvas.height - 10);
+            courtCtx.stroke();
+            
+            const shortServiceLineY = 10 + (courtCanvas.height - 20) * 0.29; 
+            courtCtx.beginPath();
+            courtCtx.moveTo(10 + singleSideLineWidth, shortServiceLineY);
+            courtCtx.lineTo(courtCanvas.width - 10 - singleSideLineWidth, shortServiceLineY);
+            courtCtx.stroke();
+
+            courtCtx.beginPath();
+            courtCtx.moveTo(courtCanvas.width / 2, shortServiceLineY);
+            courtCtx.lineTo(courtCanvas.width / 2, courtCanvas.height - 10);
+            courtCtx.stroke();
+        }
+
+        /**
+         * ヒートマップをコートCanvasに描画
+         */
+        function drawHeatmapOnCourt(currentTime) {
+            // if (maxHeatmapValue === 0) return; // This check is now done with currentMaxHeatmapValue
+
+            const cellWidth = (courtCanvas.width - 20) / HEATMAP_GRID_X;
+            const cellHeight = (courtCanvas.height - 20) / HEATMAP_GRID_Y;
+
+            // 現在時刻までのヒートマップデータを再計算
+            const currentHeatmapGrid = Array(HEATMAP_GRID_Y).fill(null).map(() => Array(HEATMAP_GRID_X).fill(0));
+            let currentMaxHeatmapValue = 0;
+
+            const filteredData = playerMovementData.filter(d => d.time <= currentTime);
+            
+            for (const data of filteredData) {
+                let targetXNorm, targetYNorm;
+                const lVis = data.leftAnkle.visibility || 0;
+                const rVis = data.rightAnkle.visibility || 0;
+                const goodVisThreshold = 0.5; // Defined locally, used locally. This is fine.
+
+                if (lVis > goodVisThreshold && rVis > goodVisThreshold) {
+                    targetXNorm = (data.leftAnkle.x + data.rightAnkle.x) / 2;
+                    targetYNorm = (data.leftAnkle.y + data.rightAnkle.y) / 2;
+                } else if (lVis > goodVisThreshold) {
+                    targetXNorm = data.leftAnkle.x;
+                    targetYNorm = data.leftAnkle.y;
+                } else if (rVis > goodVisThreshold) {
+                    targetXNorm = data.rightAnkle.x;
+                    targetYNorm = data.rightAnkle.y;
+                } else {
+                    continue;
+                }
+                
+                const gridX = Math.floor(targetXNorm * HEATMAP_GRID_X);
+                const gridY = Math.floor(targetYNorm * HEATMAP_GRID_Y);
+
+                if (gridX >= 0 && gridX < HEATMAP_GRID_X && gridY >= 0 && gridY < HEATMAP_GRID_Y) {
+                    currentHeatmapGrid[gridY][gridX]++;
+                    if (currentHeatmapGrid[gridY][gridX] > currentMaxHeatmapValue) {
+                        currentMaxHeatmapValue = currentHeatmapGrid[gridY][gridX];
+                    }
+                }
+            }
+            if (currentMaxHeatmapValue === 0) return; // If no data for current time, don't draw heatmap
+
+
+            for (let y = 0; y < HEATMAP_GRID_Y; y++) {
+                for (let x = 0; x < HEATMAP_GRID_X; x++) {
+                    if (currentHeatmapGrid[y][x] > 0) {
+                        const intensity = currentHeatmapGrid[y][x] / currentMaxHeatmapValue;
+                        // 色の計算: intensity 0 (青) -> 0.5 (緑) -> 1 (赤)
+                        let r, g, b;
+                        if (intensity < 0.5) {
+                            r = 0;
+                            g = Math.floor(255 * (intensity * 2));
+                            b = Math.floor(255 * (1 - intensity * 2));
+                        } else {
+                            r = Math.floor(255 * ((intensity - 0.5) * 2));
+                            g = Math.floor(255 * (1 - (intensity - 0.5) * 2));
+                            b = 0;
+                        }
+                        courtCtx.fillStyle = `rgba(${r}, ${g}, ${b}, 0.6)`; // 透明度0.6
+                        courtCtx.fillRect(10 + x * cellWidth, 10 + y * cellHeight, cellWidth, cellHeight);
+                    }
+                }
+            }
+        }
+
+
+        /**
+         * コートCanvasにプレイヤーの移動軌跡を描画 (指定時刻まで)
+         */
+        function drawPlayerMovementOnCourt(currentTime) {
+            const filteredData = playerMovementData.filter(d => d.time <= currentTime);
+            if (filteredData.length === 0) return;
+
+            const goodVisThreshold = 0.5; // Moved definition to function scope
+
+            courtCtx.strokeStyle = 'rgba(239, 83, 80, 0.9)'; 
+            courtCtx.lineWidth = 2.5;
+            courtCtx.beginPath();
+            let firstPoint = true;
+
+            for (const data of filteredData) {
+                let targetXNorm, targetYNorm;
+                const lVis = data.leftAnkle.visibility || 0;
+                const rVis = data.rightAnkle.visibility || 0;
+                // goodVisThreshold is now accessible here
+
+                if (lVis > goodVisThreshold && rVis > goodVisThreshold) {
+                    targetXNorm = (data.leftAnkle.x + data.rightAnkle.x) / 2;
+                    targetYNorm = (data.leftAnkle.y + data.rightAnkle.y) / 2;
+                } else if (lVis > goodVisThreshold) {
+                    targetXNorm = data.leftAnkle.x;
+                    targetYNorm = data.leftAnkle.y;
+                } else if (rVis > goodVisThreshold) {
+                    targetXNorm = data.rightAnkle.x;
+                    targetYNorm = data.rightAnkle.y;
+                } else {
+                    continue; 
+                }
+
+                const plotX = 10 + targetXNorm * (courtCanvas.width - 20);
+                const plotY = 10 + targetYNorm * (courtCanvas.height - 20);
+
+                if (firstPoint) {
+                    courtCtx.moveTo(plotX, plotY);
+                    firstPoint = false;
+                } else {
+                    courtCtx.lineTo(plotX, plotY);
+                }
+            }
+            courtCtx.stroke(); 
+
+            // 最新の点に円を描画
+            if (filteredData.length > 0) {
+                const lastData = filteredData[filteredData.length - 1];
+                 let lastXNorm, lastYNorm;
+                const lVisLast = lastData.leftAnkle.visibility || 0;
+                const rVisLast = lastData.rightAnkle.visibility || 0;
+                // goodVisThreshold is now accessible here
+
+                if (lVisLast > goodVisThreshold && rVisLast > goodVisThreshold) {
+                    lastXNorm = (lastData.leftAnkle.x + lastData.rightAnkle.x) / 2;
+                    lastYNorm = (lastData.leftAnkle.y + lastData.rightAnkle.y) / 2;
+                } else if (lVisLast > goodVisThreshold) {
+                    lastXNorm = lastData.leftAnkle.x;
+                    lastYNorm = lastData.leftAnkle.y;
+                } else if (rVisLast > goodVisThreshold) {
+                    lastXNorm = lastData.rightAnkle.x;
+                    lastYNorm = lastData.rightAnkle.y;
+                } else {
+                    // If no visible ankle for the last point, don't draw the circle.
+                    // Or, you could decide to not draw the trajectory at all if the last point isn't clear.
+                    // For now, just return and don't draw the circle.
+                    return; 
+                }
+
+                const lastPlotX = 10 + lastXNorm * (courtCanvas.width - 20);
+                const lastPlotY = 10 + lastYNorm * (courtCanvas.height - 20);
+                
+                courtCtx.fillStyle = 'rgba(33, 150, 243, 0.9)'; 
+                courtCtx.beginPath();
+                courtCtx.arc(lastPlotX, lastPlotY, 5, 0, 2 * Math.PI); 
+                courtCtx.fill();
+            }
+        }
+
+        /**
+         * スライダーの時刻表示を更新
+         */
+        function updateCurrentTimeDisplay() {
+            const current = parseFloat(timeSlider.value).toFixed(2);
+            const duration = parseFloat(video.duration || 0).toFixed(2);
+            currentTimeDisplay.textContent = `${current}s / ${duration}s`;
+        }
+
+
+        /**
+         * 録画開始・停止処理 (変更なし)
+         */
+        startButton.addEventListener('click', () => {
+            if (video.paused) video.play().catch(e => console.error("Video play error:", e));
+            stream = canvas.captureStream(30);
+            mediaRecorder = new MediaRecorder(stream, { mimeType: 'video/webm; codecs=vp9' });
+            recordedChunks = [];
+            mediaRecorder.ondataavailable = (e) => { if (e.data && e.data.size > 0) recordedChunks.push(e.data); };
+            mediaRecorder.onstop = () => {
+                const blob = new Blob(recordedChunks, { type: 'video/webm' });
+                const url = URL.createObjectURL(blob);
+                downloadLink.href = url;
+                downloadLink.style.display = 'inline-block';
+                const originalFileName = fileInput.files[0] ? fileInput.files[0].name.replace(/\.[^/.]+$/, "") : "video";
+                downloadLink.download = `${originalFileName}_badminton_analysis.webm`;
+            };
+            mediaRecorder.start();
+            startButton.disabled = true;
+            stopButton.disabled = false;
+            downloadLink.style.display = 'none';
+            fileInput.disabled = true;
+            timeSlider.disabled = true; // 録画中はスライダー操作不可
+        });
+
+        stopButton.addEventListener('click', () => stopRecording());
+
+        function stopRecording() {
+            if (mediaRecorder && mediaRecorder.state === 'recording') mediaRecorder.stop();
+            if (stream) stream.getTracks().forEach(track => track.stop());
+            startButton.disabled = false;
+            stopButton.disabled = true;
+            fileInput.disabled = false;
+            if(video.duration > 0) timeSlider.disabled = false; // 動画があればスライダー操作可
+        }
+
+        // 初期状態でコートとヒートマップグリッドを準備
+        drawCourtBase();
+        initHeatmapGrid();
+
+    </script>
+</body>
+</html>
