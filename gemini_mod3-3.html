@@ -1,0 +1,811 @@
+<!DOCTYPE html>
+<html lang="ja">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>バドミントン動作分析アプリ</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        /* カスタムCSS */
+        body {
+            font-family: 'Inter', 'Helvetica Neue', Arial, sans-serif;
+        }
+
+        /* スライダーのつまみのスタイル */
+        input[type="range"]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            appearance: none;
+            width: 20px;
+            height: 20px;
+            background: #fb923c; /* orange-400 */
+            cursor: pointer;
+            border-radius: 50%;
+            border: 2px solid white;
+            box-shadow: 0 0 2px rgba(0,0,0,0.3);
+        }
+
+        input[type="range"]::-moz-range-thumb {
+            width: 18px; /* Firefoxはborderを内側に描画するため少し小さく */
+            height: 18px;
+            background: #fb923c;
+            cursor: pointer;
+            border-radius: 50%;
+            border: 2px solid white;
+            box-shadow: 0 0 2px rgba(0,0,0,0.3);
+        }
+
+        .analysis-canvas {
+            border: 1px solid #e5e7eb; /* gray-200 */
+            background-color: #f9fafb; /* gray-50 */
+        }
+
+        .container {
+            max-width: 900px;
+        }
+
+        h1, h2, h3 {
+            text-shadow: 1px 1px 2px rgba(0, 0, 0, 0.1);
+        }
+
+        .crop-handle {
+            position: absolute; /* We will draw them on canvas instead */
+            width: 12px;
+            height: 12px;
+            background-color: rgba(251, 146, 60, 0.8); /* orange-400 with opacity */
+            border: 1px solid white;
+            border-radius: 50%;
+            cursor: grab;
+            box-shadow: 0 0 3px rgba(0,0,0,0.5);
+        }
+        #poseCanvas { /* Ensure poseCanvas can receive mouse events for cropping */
+            position: relative; /* Needed if we were to add DOM handles, but drawing directly is fine */
+        }
+    </style>
+</head>
+
+<body class="bg-gradient-to-br from-orange-100 via-amber-100 to-yellow-100 text-gray-800 p-4 min-h-screen flex items-center justify-center">
+    <div class="container mx-auto bg-white bg-opacity-70 p-6 rounded-xl shadow-2xl w-full">
+        <header class="text-center mb-8">
+            <h1 class="text-4xl font-bold text-orange-600">バドミントン動作分析</h1>
+            <p class="text-gray-600 mt-1">動画から選手の動きを捉え、軌跡とヒートマップで可視化します。</p>
+        </header>
+
+        <!-- Section 1: Video Upload and Display -->
+        <section class="mb-8 p-4 border border-orange-200 rounded-lg bg-white/50">
+            <h2 class="text-2xl font-semibold mb-3 text-orange-500">1. 動画の準備</h2>
+            <input type="file" id="fileInput" accept="video/*" class="block w-full text-sm text-slate-500
+              file:mr-4 file:py-2 file:px-4
+              file:rounded-lg file:border-0
+              file:text-sm file:font-semibold
+              file:bg-orange-100 file:text-orange-700
+              hover:file:bg-orange-200 disabled:opacity-50 transition-colors" disabled>
+            <p id="loadingTxt" class="text-sm text-gray-500 mt-2">AIモデルを読み込んでいます... 初回は数秒～数十秒かかることがあります。</p>
+
+            <div class="mt-4 grid grid-cols-1 md:grid-cols-2 gap-4 items-start">
+                <div>
+                    <h3 class="text-lg font-medium text-gray-700 mb-1">オリジナル動画 / トリミング範囲設定</h3>
+                    <div class="relative">
+                        <video id="video" controls class="w-full rounded-md shadow-md aspect-video hidden bg-gray-200"></video>
+                        <canvas id="poseCanvas" class="w-full rounded-md shadow-md aspect-video hidden bg-gray-200 absolute top-0 left-0 pointer-events-auto"></canvas>
+                         <!-- pointer-events-auto is crucial for mouse events on canvas -->
+                    </div>
+                </div>
+                <div>
+                    <h3 class="text-lg font-medium text-gray-700 mb-1">姿勢推定オーバーレイ (録画用)</h3>
+                    <canvas id="overlayCanvas" class="w-full rounded-md shadow-md aspect-video hidden bg-gray-300"></canvas>
+                     <!-- This canvas is now explicitly for drawing pose for recording. Original poseCanvas for video + crop UI -->
+                </div>
+            </div>
+        </section>
+
+        <!-- Section 2: Recording Controls -->
+        <section class="mb-8 p-4 border border-orange-200 rounded-lg text-center bg-white/50">
+            <h2 class="text-2xl font-semibold mb-3 text-orange-500">2. 録画と座標取得</h2>
+            <button id="startButton" class="bg-orange-500 hover:bg-orange-600 text-white font-bold py-3 px-6 rounded-lg shadow-md disabled:opacity-50 transition-transform hover:scale-105" disabled>録画開始</button>
+            <button id="stopButton" class="bg-red-500 hover:bg-red-600 text-white font-bold py-3 px-6 rounded-lg shadow-md disabled:opacity-50 ml-2 transition-transform hover:scale-105" disabled>録画停止</button>
+            <a id="downloadLink" href="#" download="badminton_analysis.webm" class="hidden mt-4 inline-block bg-green-500 hover:bg-green-600 text-white font-bold py-3 px-6 rounded-lg shadow-md transition-transform hover:scale-105">録画をダウンロード</a>
+        </section>
+
+        <!-- Section 3: Movement Analysis -->
+        <section id="analysisSection" class="mb-6 p-4 border border-orange-200 rounded-lg hidden bg-white/50">
+            <h2 class="text-2xl font-semibold mb-3 text-orange-500">3. 移動分析結果</h2>
+            <button id="analyzeButton" class="bg-blue-500 hover:bg-blue-600 text-white font-bold py-3 px-6 rounded-lg shadow-md w-full mb-4 transition-transform hover:scale-105">移動分析を開始・更新</button>
+
+            <!-- Subsection 3.1: Court Cropping -->
+            <div id="trimControls" class="mt-4 p-3 border border-dashed border-orange-300 rounded-md bg-orange-50/50 hidden">
+                <h3 class="text-xl font-semibold mb-2 text-orange-500">コートに合わせてトリミング</h3>
+                <p class="text-xs text-gray-600 mb-2">左の動画/姿勢推定エリアに表示される四隅のハンドルをドラッグしてコート範囲を指定し、「補正を適用」を押してください。</p>
+                <button id="startTrimButton" class="bg-yellow-500 hover:bg-yellow-600 text-white font-bold py-2 px-4 rounded-lg shadow-md mr-2 transition-transform hover:scale-105">コートトリミング開始/リセット</button>
+                <button id="applyCropButton" class="bg-teal-500 hover:bg-teal-600 text-white font-bold py-2 px-4 rounded-lg shadow-md disabled:opacity-50 transition-transform hover:scale-105" disabled>補正を適用</button>
+                 <button id="resetToOriginalCoordsButton" class="bg-gray-400 hover:bg-gray-500 text-white font-bold py-2 px-4 rounded-lg shadow-md ml-2 transition-transform hover:scale-105">元の座標に戻す</button>
+            </div>
+
+            <div id="visualizationControls" class="mt-4 hidden">
+                <div class="mb-4">
+                    <label for="timeSlider" class="block mb-1 text-sm font-medium text-gray-700">表示する時間範囲 (スライダーで調整):</label>
+                    <input type="range" id="timeSlider" min="0" max="100" value="100" step="0.1" class="w-full h-3 bg-orange-200 rounded-lg appearance-none cursor-pointer">
+                    <div class="flex justify-between text-xs text-gray-500 mt-1">
+                        <span id="sliderMinTime">0.0s</span>
+                        <span id="sliderCurrentTimeLabel" class="font-semibold">現在: <span id="sliderCurrentTime">0.0s</span></span>
+                        <span id="sliderMaxTime">0.0s</span>
+                    </div>
+                </div>
+
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mt-4">
+                    <div>
+                        <h3 class="text-xl font-semibold mb-2 text-orange-500">移動軌跡</h3>
+                        <p class="text-xs text-gray-500 mb-1">青: 左足首, 赤: 右足首</p>
+                        <canvas id="trajectoryCanvas" class="w-full aspect-video analysis-canvas rounded-md shadow"></canvas>
+                    </div>
+                    <div>
+                        <h3 class="text-xl font-semibold mb-2 text-orange-500">ヒートマップ</h3>
+                        <p class="text-xs text-gray-500 mb-1">滞在頻度が高いほど赤く表示</p>
+                        <canvas id="heatmapCanvas" class="w-full aspect-video analysis-canvas rounded-md shadow"></canvas>
+                    </div>
+                </div>
+            </div>
+        </section>
+    </div>
+
+    <script type="module">
+        import {
+            PoseLandmarker,
+            FilesetResolver,
+            DrawingUtils
+        } from "https://cdn.skypack.dev/@mediapipe/tasks-vision@0.10.10";
+
+        // DOM Elements
+        const fileInput = document.getElementById('fileInput');
+        const video = document.getElementById('video');
+        const poseCanvas = document.getElementById('poseCanvas'); // Used for video overlay, crop UI
+        const overlayCanvas = document.getElementById('overlayCanvas'); // Used for drawing pose for recording
+        const startButton = document.getElementById('startButton');
+        const stopButton = document.getElementById('stopButton');
+        const downloadLink = document.getElementById('downloadLink');
+        const loadingTxt = document.getElementById('loadingTxt');
+        const analysisSection = document.getElementById('analysisSection');
+        const analyzeButton = document.getElementById('analyzeButton');
+        const trimControls = document.getElementById('trimControls');
+        const startTrimButton = document.getElementById('startTrimButton');
+        const applyCropButton = document.getElementById('applyCropButton');
+        const resetToOriginalCoordsButton = document.getElementById('resetToOriginalCoordsButton');
+        const visualizationControls = document.getElementById('visualizationControls');
+        const timeSlider = document.getElementById('timeSlider');
+        const sliderMinTime = document.getElementById('sliderMinTime');
+        const sliderCurrentTime = document.getElementById('sliderCurrentTime');
+        const sliderMaxTime = document.getElementById('sliderMaxTime');
+        const trajectoryCanvas = document.getElementById('trajectoryCanvas');
+        const heatmapCanvas = document.getElementById('heatmapCanvas');
+
+        // Canvas Contexts
+        let ctxPose = poseCanvas.getContext('2d');
+        let ctxOverlay = overlayCanvas.getContext('2d'); // Context for overlayCanvas
+        let ctxTrajectory = trajectoryCanvas.getContext('2d');
+        let ctxHeatmap = heatmapCanvas.getContext('2d');
+
+        // MediaRecorder & PoseLandmarker
+        let mediaRecorder;
+        let recordedChunks = [];
+        let poseLandmarker = null;
+        let drawingUtilsOverlay = null; // For overlay canvas (recording)
+        let drawingUtilsPose = null;    // For pose canvas (displaying with video)
+        let runningMode = 'VIDEO';
+        let lastVideoTime = -1;
+        
+        let anklePositions = [];          // Stores current ankle positions (can be pristine or cropped)
+        let pristineAnklePositions = [];  // Stores the original, uncropped ankle positions from recording
+        
+        let stream = null;
+
+        const HEATMAP_GRID_SIZE = 25;
+        let videoDuration = 0;
+
+        // Cropping related variables
+        let isCroppingModeActive = false;
+        let cropRectPoints = { // Normalized coordinates {x, y} relative to video/poseCanvas
+            tl: { x: 0.05, y: 0.05 }, // Top-left
+            tr: { x: 0.95, y: 0.05 }, // Top-right
+            br: { x: 0.95, y: 0.95 }, // Bottom-right
+            bl: { x: 0.05, y: 0.95 }  // Bottom-left
+        };
+        const HANDLE_SIZE_PX = 10; // Pixel size for drawing handles
+        let draggingHandle = null; // 'tl', 'tr', 'br', 'bl', or null
+        let dragOffsetX, dragOffsetY;
+
+
+        async function initPoseLandmarker() {
+            try {
+                const vision = await FilesetResolver.forVisionTasks(
+                    "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.10/wasm"
+                );
+                poseLandmarker = await PoseLandmarker.createFromOptions(vision, {
+                    baseOptions: {
+                        modelAssetPath: "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task",
+                        delegate: "GPU"
+                    },
+                    runningMode: runningMode,
+                    numPoses: 1
+                });
+                console.log("PoseLandmarker initialized");
+                loadingTxt.textContent = "モデル読み込み完了。動画を選択してください。";
+                fileInput.disabled = false;
+            } catch (err) {
+                console.error("Error initializing PoseLandmarker:", err);
+                loadingTxt.textContent = "モデル読み込みに失敗しました。ページをリロードしてください。";
+            }
+        }
+        initPoseLandmarker();
+
+        fileInput.addEventListener('change', (event) => {
+            const file = event.target.files[0];
+            if (!file) return;
+
+            const fileURL = URL.createObjectURL(file);
+            video.src = fileURL;
+            video.style.display = 'block';
+            poseCanvas.style.display = 'block';
+            overlayCanvas.style.display = 'block'; // Show overlay canvas
+
+            video.onloadedmetadata = () => {
+                videoDuration = video.duration;
+                [poseCanvas, overlayCanvas, trajectoryCanvas, heatmapCanvas].forEach(cvs => {
+                    cvs.width = video.videoWidth;
+                    cvs.height = video.videoHeight;
+                });
+                
+                // Initialize drawing utils for both canvases
+                drawingUtilsOverlay = new DrawingUtils(ctxOverlay);
+                drawingUtilsPose = new DrawingUtils(ctxPose); // For drawing on poseCanvas if needed (e.g. for direct display)
+
+
+                startButton.disabled = false;
+                analysisSection.classList.add('hidden');
+                trimControls.classList.add('hidden');
+                visualizationControls.classList.add('hidden');
+                anklePositions = [];
+                pristineAnklePositions = [];
+                recordedChunks = [];
+                downloadLink.classList.add('hidden');
+                isCroppingModeActive = false; // Reset cropping mode
+                resetCropRectPoints();
+                loadingTxt.textContent = "動画の準備ができました。録画を開始できます。";
+            };
+            video.onerror = () => {
+                console.error("Error loading video file.");
+                loadingTxt.textContent = "エラー: 動画ファイルの読み込みに失敗しました。";
+            }
+        });
+
+        async function predictWebcam() {
+            if (video.readyState < 2) { // HAVE_CURRENT_DATA
+                requestAnimationFrame(predictWebcam);
+                return;
+            }
+
+            // Clear poseCanvas (which is on top of video)
+            ctxPose.clearRect(0, 0, poseCanvas.width, poseCanvas.height);
+
+            if (poseLandmarker && video.currentTime !== lastVideoTime) {
+                const startTimeMs = performance.now();
+                lastVideoTime = video.currentTime;
+
+                poseLandmarker.detectForVideo(video, startTimeMs, (result) => {
+                    ctxOverlay.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height); // Clear recording canvas
+                    // Note: We don't draw video on overlayCanvas, it's just for pose
+
+                    if (result.landmarks && result.landmarks.length > 0) {
+                        const landmarks = result.landmarks[0];
+                        
+                        // Draw landmarks and connections on overlayCanvas (for recording)
+                        if (drawingUtilsOverlay) {
+                            drawingUtilsOverlay.drawConnectors(landmarks, PoseLandmarker.POSE_CONNECTIONS, { color: '#FF8A65', lineWidth: 2 });
+                            drawingUtilsOverlay.drawLandmarks(landmarks, { color: '#FFAB91', radius: 3 });
+                        }
+                        
+                        // Optionally, draw on poseCanvas if not in cropping mode for direct view
+                        if (!isCroppingModeActive && drawingUtilsPose) {
+                             //ctxPose.drawImage(video, 0, 0, poseCanvas.width, poseCanvas.height); // Redraw video if poseCanvas is top for display
+                             // drawingUtilsPose.drawConnectors(landmarks, PoseLandmarker.POSE_CONNECTIONS, { color: '#4CAF50', lineWidth: 2 });
+                             // drawingUtilsPose.drawLandmarks(landmarks, { color: '#8BC34A', radius: 3 });
+                        }
+
+
+                        if (mediaRecorder && mediaRecorder.state === "recording") {
+                            const leftAnkle = landmarks[27];
+                            const rightAnkle = landmarks[28];
+                            if (leftAnkle && rightAnkle) {
+                                anklePositions.push({ // This is the live list during recording
+                                    time: video.currentTime,
+                                    leftAnkle: { x: leftAnkle.x, y: leftAnkle.y, visibility: leftAnkle.visibility },
+                                    rightAnkle: { x: rightAnkle.x, y: rightAnkle.y, visibility: rightAnkle.visibility }
+                                });
+                            }
+                        }
+                    }
+                });
+            }
+
+            // If cropping mode is active, draw cropping UI on poseCanvas
+            if (isCroppingModeActive) {
+                drawCropUI();
+            }
+
+            if (!video.paused && !video.ended) {
+                requestAnimationFrame(predictWebcam);
+            }
+        }
+        
+        video.addEventListener('play', () => {
+            lastVideoTime = -1;
+            requestAnimationFrame(predictWebcam);
+        });
+        
+        video.addEventListener('ended', () => {
+            if (mediaRecorder && mediaRecorder.state === 'recording') {
+                stopRecording();
+            }
+        });
+
+        startButton.addEventListener('click', () => {
+            // Stream from overlayCanvas which has the pose drawings for recording
+            if (overlayCanvas.captureStream) {
+                stream = overlayCanvas.captureStream(30);
+            } else {
+                console.error("captureStream not supported on overlayCanvas.");
+                loadingTxt.textContent = "エラー: お使いのブラウザは録画機能に対応していません。";
+                return;
+            }
+
+            if (!stream) {
+                 console.error("ストリームの取得に失敗しました。");
+                 loadingTxt.textContent = "エラー: 録画ストリームの取得に失敗しました。";
+                 return;
+            }
+
+            video.play();
+            anklePositions = []; // Reset live positions for new recording
+            pristineAnklePositions = []; // Clear pristine as well
+            recordedChunks = [];
+            try {
+                mediaRecorder = new MediaRecorder(stream, { mimeType: 'video/webm; codecs=vp9' });
+            } catch (e) {
+                console.error("Error creating MediaRecorder:", e);
+                try {
+                    mediaRecorder = new MediaRecorder(stream, { mimeType: 'video/webm' });
+                } catch (e2) {
+                    console.error("Error creating MediaRecorder with fallback:", e2);
+                    loadingTxt.textContent = "エラー: MediaRecorderの作成に失敗しました。";
+                    return;
+                }
+            }
+
+            mediaRecorder.ondataavailable = (event) => {
+                if (event.data && event.data.size > 0) {
+                    recordedChunks.push(event.data);
+                }
+            };
+
+            mediaRecorder.onstop = () => {
+                const blob = new Blob(recordedChunks, { type: 'video/webm' });
+                const url = URL.createObjectURL(blob);
+                downloadLink.href = url;
+                downloadLink.classList.remove('hidden');
+                
+                // Store the recorded positions as pristine, and also set current display to them
+                pristineAnklePositions = JSON.parse(JSON.stringify(anklePositions)); // Deep copy
+                // anklePositions is already populated with live data, will be used as current display
+
+                analysisSection.classList.remove('hidden');
+                trimControls.classList.remove('hidden'); // Show trim controls
+                startTrimButton.disabled = false;
+                applyCropButton.disabled = true; // Enabled when trim mode starts
+                analyzeButton.disabled = false;
+                visualizationControls.classList.add('hidden');
+
+                if (anklePositions.length > 0) {
+                    const maxTime = anklePositions[anklePositions.length - 1].time;
+                    timeSlider.max = maxTime.toFixed(1);
+                    timeSlider.value = maxTime.toFixed(1);
+                    sliderMaxTime.textContent = `${maxTime.toFixed(1)}s`;
+                    sliderCurrentTime.textContent = `${maxTime.toFixed(1)}s`;
+                } else {
+                     timeSlider.max = videoDuration.toFixed(1);
+                     timeSlider.value = videoDuration.toFixed(1);
+                     sliderMaxTime.textContent = `${videoDuration.toFixed(1)}s`;
+                     sliderCurrentTime.textContent = `${videoDuration.toFixed(1)}s`;
+                }
+                sliderMinTime.textContent = "0.0s";
+                loadingTxt.textContent = "録画が完了しました。移動分析またはコートトリミングを開始できます。";
+            };
+            
+            mediaRecorder.onerror = (event) => {
+                console.error("MediaRecorder error:", event.error);
+                loadingTxt.textContent = `エラー: 録画中にエラーが発生しました: ${event.error.name}`;
+                stopRecording();
+            };
+
+            mediaRecorder.start();
+            console.log('Recording started');
+            loadingTxt.textContent = "録画中です...";
+            startButton.disabled = true;
+            stopButton.disabled = false;
+            downloadLink.classList.add('hidden');
+            analyzeButton.disabled = true;
+            trimControls.classList.add('hidden');
+        });
+
+        function stopRecording() {
+            if (mediaRecorder && mediaRecorder.state === 'recording') {
+                mediaRecorder.stop();
+                console.log('Recording stopped');
+            }
+            if (stream) {
+                stream.getTracks().forEach(track => track.stop());
+                stream = null;
+            }
+            startButton.disabled = false;
+            stopButton.disabled = true;
+            video.pause(); // Pause video when recording stops
+            requestAnimationFrame(() => { // Ensure one last draw if needed for crop UI
+                if (isCroppingModeActive) drawCropUI();
+                 else { // If not cropping, clear poseCanvas
+                     ctxPose.clearRect(0, 0, poseCanvas.width, poseCanvas.height);
+                 }
+            });
+        }
+        stopButton.addEventListener('click', stopRecording);
+
+        analyzeButton.addEventListener('click', () => {
+            if (anklePositions.length === 0 && pristineAnklePositions.length === 0) {
+                loadingTxt.textContent = "情報: 分析データがありません。先に録画してください。";
+                return;
+            }
+            // If anklePositions is empty but pristine is not, it means we reset. Use pristine.
+            const dataToAnalyze = anklePositions.length > 0 ? anklePositions : pristineAnklePositions;
+            if (dataToAnalyze.length === 0) {
+                 loadingTxt.textContent = "情報: 分析データがありません。";
+                 return;
+            }
+
+            visualizationControls.classList.remove('hidden');
+            drawAnalysis(parseFloat(timeSlider.value), dataToAnalyze); // Pass data explicitly
+            loadingTxt.textContent = "移動分析結果を表示しています。";
+        });
+
+        timeSlider.addEventListener('input', () => {
+            const currentTimeVal = parseFloat(timeSlider.value);
+            sliderCurrentTime.textContent = `${currentTimeVal.toFixed(1)}s`;
+            if (!visualizationControls.classList.contains('hidden')) {
+                 const dataToAnalyze = anklePositions.length > 0 ? anklePositions : pristineAnklePositions;
+                 drawAnalysis(currentTimeVal, dataToAnalyze);
+            }
+        });
+        
+        function drawAnalysis(currentTime, positionsToAnalyze) {
+            ctxTrajectory.clearRect(0, 0, trajectoryCanvas.width, trajectoryCanvas.height);
+            ctxHeatmap.clearRect(0, 0, heatmapCanvas.width, heatmapCanvas.height);
+
+            const filteredPositions = positionsToAnalyze.filter(p => p.time <= currentTime);
+
+            if (filteredPositions.length === 0) {
+                const msg = "この時間範囲に表示できるデータがありません。";
+                ctxTrajectory.font = "16px Arial"; ctxTrajectory.fillStyle = "gray"; ctxTrajectory.textAlign = "center";
+                ctxTrajectory.fillText(msg, trajectoryCanvas.width / 2, trajectoryCanvas.height / 2);
+                ctxHeatmap.font = "16px Arial"; ctxHeatmap.fillStyle = "gray"; ctxHeatmap.textAlign = "center";
+                ctxHeatmap.fillText(msg, heatmapCanvas.width / 2, heatmapCanvas.height / 2);
+                return;
+            }
+            drawTrajectory(filteredPositions);
+            drawHeatmap(filteredPositions);
+        }
+
+        function drawTrajectory(positions) {
+            ctxTrajectory.lineWidth = 2;
+            const drawPath = (ankleKey, color) => {
+                ctxTrajectory.strokeStyle = color;
+                ctxTrajectory.beginPath();
+                let firstPoint = true;
+                for (const pos of positions) {
+                    const ankle = pos[ankleKey];
+                    if (ankle && typeof ankle.x === 'number' && typeof ankle.y === 'number') { // Check if x,y are valid
+                        const x = ankle.x * trajectoryCanvas.width;
+                        const y = ankle.y * trajectoryCanvas.height;
+                        if (firstPoint) {
+                            ctxTrajectory.moveTo(x, y);
+                            firstPoint = false;
+                        } else {
+                            ctxTrajectory.lineTo(x, y);
+                        }
+                    } else {
+                        firstPoint = true; // Reset if data is missing, to avoid connecting unrelated points
+                    }
+                }
+                ctxTrajectory.stroke();
+            };
+            drawPath('leftAnkle', 'rgba(59, 130, 246, 0.8)'); // Blue
+            drawPath('rightAnkle', 'rgba(239, 68, 68, 0.8)'); // Red
+        }
+
+        function drawHeatmap(positions) {
+            const gridW = heatmapCanvas.width / HEATMAP_GRID_SIZE;
+            const gridH = heatmapCanvas.height / HEATMAP_GRID_SIZE;
+            const heatmapData = Array(HEATMAP_GRID_SIZE).fill(null).map(() => Array(HEATMAP_GRID_SIZE).fill(0));
+            let maxHits = 0;
+
+            const processAnkle = (ankle) => {
+                if (ankle && typeof ankle.x === 'number' && typeof ankle.y === 'number') { // Check if x,y are valid
+                    const gridX = Math.min(HEATMAP_GRID_SIZE - 1, Math.max(0, Math.floor(ankle.x * HEATMAP_GRID_SIZE)));
+                    const gridY = Math.min(HEATMAP_GRID_SIZE - 1, Math.max(0, Math.floor(ankle.y * HEATMAP_GRID_SIZE)));
+                    heatmapData[gridY][gridX]++;
+                    if (heatmapData[gridY][gridX] > maxHits) maxHits = heatmapData[gridY][gridX];
+                }
+            };
+
+            for (const pos of positions) {
+                processAnkle(pos.leftAnkle);
+                processAnkle(pos.rightAnkle);
+            }
+
+            if (maxHits === 0) return;
+
+            for (let y = 0; y < HEATMAP_GRID_SIZE; y++) {
+                for (let x = 0; x < HEATMAP_GRID_SIZE; x++) {
+                    if (heatmapData[y][x] > 0) {
+                        const intensity = heatmapData[y][x] / maxHits;
+                        const r = Math.floor(255 * Math.min(1, intensity * 1.5));
+                        const g = Math.floor(255 * Math.max(0, (1 - intensity * 1.5)));
+                        const b = 0;
+                        ctxHeatmap.fillStyle = `rgba(${r}, ${g}, ${b}, ${Math.max(0.1, intensity * 0.8)})`;
+                        ctxHeatmap.fillRect(x * gridW, y * gridH, gridW, gridH);
+                    }
+                }
+            }
+        }
+
+        // --- Cropping Functionality ---
+        function resetCropRectPoints() {
+            cropRectPoints = {
+                tl: { x: 0.05, y: 0.05 }, tr: { x: 0.95, y: 0.05 },
+                br: { x: 0.95, y: 0.95 }, bl: { x: 0.05, y: 0.95 }
+            };
+        }
+
+        startTrimButton.addEventListener('click', () => {
+            isCroppingModeActive = true;
+            applyCropButton.disabled = false;
+            resetCropRectPoints(); // Reset to default crop rectangle
+            video.pause(); // Pause video to make dragging easier
+            loadingTxt.textContent = "トリミング範囲調整モード。左の枠の角をドラッグしてください。";
+            // Initial draw of crop UI
+            requestAnimationFrame(() => {
+                 ctxPose.clearRect(0,0,poseCanvas.width, poseCanvas.height); // Clear pose canvas before drawing crop UI
+                 drawCropUI();
+            });
+        });
+        
+        resetToOriginalCoordsButton.addEventListener('click', () => {
+            if (pristineAnklePositions.length > 0) {
+                anklePositions = JSON.parse(JSON.stringify(pristineAnklePositions)); // Deep copy
+                isCroppingModeActive = false; // Turn off cropping mode
+                applyCropButton.disabled = true;
+                loadingTxt.textContent = "座標をオリジナルに戻しました。分析を更新してください。";
+                ctxPose.clearRect(0, 0, poseCanvas.width, poseCanvas.height); // Clear crop UI
+                
+                // Redraw analysis with original data
+                if (!visualizationControls.classList.contains('hidden')) {
+                    drawAnalysis(parseFloat(timeSlider.value), anklePositions);
+                } else if (analyzeButton.disabled === false) {
+                    // If controls not visible but analysis can be started, prompt user
+                    loadingTxt.textContent += " 「移動分析を開始・更新」ボタンで表示を更新できます。";
+                }
+
+            } else {
+                loadingTxt.textContent = "オリジナルの座標データがありません。";
+            }
+        });
+
+
+        applyCropButton.addEventListener('click', () => {
+            if (!isCroppingModeActive || pristineAnklePositions.length === 0) {
+                loadingTxt.textContent = "トリミングモードでないか、元の座標データがありません。";
+                return;
+            }
+            isCroppingModeActive = false;
+            applyCropButton.disabled = true; // Disable after applying
+            video.play(); // Resume video if it was paused
+
+            const correctedPositions = [];
+            // Determine the bounding box of the cropRectPoints
+            const cropXNorm = Math.min(cropRectPoints.tl.x, cropRectPoints.bl.x);
+            const cropYNorm = Math.min(cropRectPoints.tl.y, cropRectPoints.tr.y);
+            const cropMaxXNorm = Math.max(cropRectPoints.tr.x, cropRectPoints.br.x);
+            const cropMaxYNorm = Math.max(cropRectPoints.bl.y, cropRectPoints.br.y);
+            
+            const cropWNorm = cropMaxXNorm - cropXNorm;
+            const cropHNorm = cropMaxYNorm - cropYNorm;
+
+            if (cropWNorm <= 0 || cropHNorm <= 0) {
+                loadingTxt.textContent = "エラー: トリミング範囲が無効です。";
+                ctxPose.clearRect(0, 0, poseCanvas.width, poseCanvas.height); // Clear crop UI
+                return;
+            }
+
+            for (const pos of pristineAnklePositions) {
+                const newPos = { time: pos.time, leftAnkle: null, rightAnkle: null };
+                
+                function correctSingleAnkle(origAnkle) {
+                    if (!origAnkle || typeof origAnkle.x !== 'number' || typeof origAnkle.y !== 'number') return null;
+                    
+                    // Check if original point is within the crop rectangle
+                    if (origAnkle.x >= cropXNorm && origAnkle.x <= cropMaxXNorm &&
+                        origAnkle.y >= cropYNorm && origAnkle.y <= cropMaxYNorm) {
+                        
+                        return {
+                            x: (origAnkle.x - cropXNorm) / cropWNorm,
+                            y: (origAnkle.y - cropYNorm) / cropHNorm,
+                            visibility: origAnkle.visibility
+                        };
+                    }
+                    return null; // Point is outside crop area
+                }
+
+                newPos.leftAnkle = correctSingleAnkle(pos.leftAnkle);
+                newPos.rightAnkle = correctSingleAnkle(pos.rightAnkle);
+                
+                // Add to correctedPositions only if at least one ankle was successfully corrected
+                if (newPos.leftAnkle || newPos.rightAnkle) {
+                     correctedPositions.push(newPos);
+                }
+            }
+            
+            anklePositions = correctedPositions; // Update global anklePositions with corrected ones
+            
+            loadingTxt.textContent = "座標を補正しました。分析結果を更新しています。";
+            if (!visualizationControls.classList.contains('hidden')) {
+                drawAnalysis(parseFloat(timeSlider.value), anklePositions);
+            } else {
+                 loadingTxt.textContent += " 「移動分析を開始・更新」ボタンで表示を更新できます。";
+            }
+            ctxPose.clearRect(0, 0, poseCanvas.width, poseCanvas.height); // Clear crop UI
+        });
+
+        function drawCropUI() {
+            if (!isCroppingModeActive) return;
+
+            // Clear only poseCanvas where UI is drawn. Video is separate.
+            ctxPose.clearRect(0, 0, poseCanvas.width, poseCanvas.height);
+
+            const w = poseCanvas.width;
+            const h = poseCanvas.height;
+
+            // Draw rectangle
+            ctxPose.strokeStyle = 'rgba(251, 146, 60, 0.9)'; // orange-400
+            ctxPose.lineWidth = 2;
+            ctxPose.beginPath();
+            ctxPose.moveTo(cropRectPoints.tl.x * w, cropRectPoints.tl.y * h);
+            ctxPose.lineTo(cropRectPoints.tr.x * w, cropRectPoints.tr.y * h);
+            ctxPose.lineTo(cropRectPoints.br.x * w, cropRectPoints.br.y * h);
+            ctxPose.lineTo(cropRectPoints.bl.x * w, cropRectPoints.bl.y * h);
+            ctxPose.closePath();
+            ctxPose.stroke();
+
+            // Draw handles
+            ctxPose.fillStyle = 'rgba(251, 146, 60, 0.9)';
+            ctxPose.strokeStyle = 'white';
+            ctxPose.lineWidth = 1;
+            for (const key in cropRectPoints) {
+                const point = cropRectPoints[key];
+                ctxPose.beginPath();
+                ctxPose.arc(point.x * w, point.y * h, HANDLE_SIZE_PX / 2, 0, 2 * Math.PI);
+                ctxPose.fill();
+                ctxPose.stroke();
+            }
+        }
+        
+        function getMousePos(canvas, evt) {
+            const rect = canvas.getBoundingClientRect();
+            // For touch events, evt.clientX/Y might not exist, use touches[0]
+            const clientX = evt.clientX || (evt.touches && evt.touches[0] ? evt.touches[0].clientX : 0);
+            const clientY = evt.clientY || (evt.touches && evt.touches[0] ? evt.touches[0].clientY : 0);
+
+            return {
+                x: (clientX - rect.left) / rect.width,  // Normalize to 0-1
+                y: (clientY - rect.top) / rect.height  // Normalize to 0-1
+            };
+        }
+
+        function onCropMouseDown(event) {
+            if (!isCroppingModeActive) return;
+            event.preventDefault(); // Prevent default actions like text selection
+
+            const mousePos = getMousePos(poseCanvas, event);
+            const w = poseCanvas.width; // For scaling handle size check
+            const h = poseCanvas.height;
+
+            for (const key in cropRectPoints) {
+                const point = cropRectPoints[key];
+                // Check distance in normalized coords, comparing against normalized handle size
+                const dist = Math.sqrt(Math.pow(mousePos.x - point.x, 2) + Math.pow(mousePos.y - point.y, 2));
+                if (dist * Math.min(w,h) < HANDLE_SIZE_PX * 1.5) { // Check within 1.5x handle radius in pixels
+                    draggingHandle = key;
+                    dragOffsetX = mousePos.x - point.x;
+                    dragOffsetY = mousePos.y - point.y;
+                    poseCanvas.style.cursor = 'grabbing';
+                    video.pause(); // Pause video while dragging for better control
+                    return;
+                }
+            }
+        }
+
+        function onCropMouseMove(event) {
+            if (!isCroppingModeActive) return;
+            event.preventDefault();
+            const mousePos = getMousePos(poseCanvas, event);
+
+            if (draggingHandle) {
+                let newX = mousePos.x - dragOffsetX;
+                let newY = mousePos.y - dragOffsetY;
+
+                // Clamp to canvas bounds [0, 1]
+                newX = Math.max(0, Math.min(1, newX));
+                newY = Math.max(0, Math.min(1, newY));
+
+                cropRectPoints[draggingHandle].x = newX;
+                cropRectPoints[draggingHandle].y = newY;
+
+                // Maintain rectangle shape (simplified: opposite corners move together)
+                // A more robust approach would be to adjust adjacent points if aspect ratio locked, etc.
+                // For now, each corner moves independently but correction logic will take min/max.
+                 if (draggingHandle === 'tl') {
+                     cropRectPoints.tr.y = newY;
+                     cropRectPoints.bl.x = newX;
+                 } else if (draggingHandle === 'tr') {
+                     cropRectPoints.tl.y = newY;
+                     cropRectPoints.br.x = newX;
+                 } else if (draggingHandle === 'br') {
+                     cropRectPoints.bl.y = newY;
+                     cropRectPoints.tr.x = newX;
+                 } else if (draggingHandle === 'bl') {
+                     cropRectPoints.br.y = newY;
+                     cropRectPoints.tl.x = newX;
+                 }
+
+
+                requestAnimationFrame(drawCropUI);
+            } else { // Check for hover
+                let onHandle = false;
+                const w = poseCanvas.width;
+                const h = poseCanvas.height;
+                for (const key in cropRectPoints) {
+                    const point = cropRectPoints[key];
+                    const dist = Math.sqrt(Math.pow(mousePos.x - point.x, 2) + Math.pow(mousePos.y - point.y, 2));
+                     if (dist * Math.min(w,h) < HANDLE_SIZE_PX * 1.5) {
+                        onHandle = true;
+                        break;
+                    }
+                }
+                poseCanvas.style.cursor = onHandle ? 'grab' : 'default';
+            }
+        }
+
+        function onCropMouseUp(event) {
+            if (!isCroppingModeActive || !draggingHandle) return;
+            event.preventDefault();
+            draggingHandle = null;
+            poseCanvas.style.cursor = 'grab'; // Or check if still over a handle
+            // video.play(); // Optionally resume video, or keep paused until "Apply"
+        }
+
+        poseCanvas.addEventListener('mousedown', onCropMouseDown);
+        poseCanvas.addEventListener('mousemove', onCropMouseMove);
+        document.addEventListener('mouseup', onCropMouseUp); // Listen on document for mouseup outside canvas
+
+        poseCanvas.addEventListener('touchstart', onCropMouseDown, { passive: false });
+        poseCanvas.addEventListener('touchmove', onCropMouseMove, { passive: false });
+        document.addEventListener('touchend', onCropMouseUp);
+
+
+    </script>
+</body>
+</html>

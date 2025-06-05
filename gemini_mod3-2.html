@@ -1,0 +1,888 @@
+<!DOCTYPE html>
+<html lang="ja">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>バドミントン動作分析アプリ</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        /* カスタムCSS */
+        body {
+            font-family: 'Inter', 'Helvetica Neue', Arial, sans-serif;
+        }
+
+        /* スライダーのつまみのスタイル */
+        input[type="range"]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            appearance: none;
+            width: 20px;
+            height: 20px;
+            background: #fb923c; /* orange-400 */
+            cursor: pointer;
+            border-radius: 50%;
+            border: 2px solid white;
+            box-shadow: 0 0 2px rgba(0,0,0,0.3);
+        }
+
+        input[type="range"]::-moz-range-thumb {
+            width: 18px; /* Firefoxはborderを内側に描画するため少し小さく */
+            height: 18px;
+            background: #fb923c;
+            cursor: pointer;
+            border-radius: 50%;
+            border: 2px solid white;
+            box-shadow: 0 0 2px rgba(0,0,0,0.3);
+        }
+
+        .analysis-canvas {
+            border: 1px solid #e5e7eb; /* gray-200 */
+            background-color: #f9fafb; /* gray-50 */
+        }
+
+        .container {
+            max-width: 900px; 
+        }
+
+        h1, h2, h3 {
+            text-shadow: 1px 1px 2px rgba(0, 0, 0, 0.1);
+        }
+        #courtTrajectoryCanvas {
+            background-color: #f0fdf4; /* Tailwind green-50 */
+        }
+    </style>
+</head>
+
+<body class="bg-gradient-to-br from-orange-100 via-amber-100 to-yellow-100 text-gray-800 p-4 min-h-screen flex items-center justify-center">
+    <div class="container mx-auto bg-white bg-opacity-70 p-6 rounded-xl shadow-2xl w-full">
+        <header class="text-center mb-8">
+            <h1 class="text-4xl font-bold text-orange-600">バドミントン動作分析</h1>
+            <p class="text-gray-600 mt-1">動画から選手の動きを捉え、軌跡とヒートマップで可視化します。</p>
+        </header>
+
+        <!-- Section 1: Video Upload and Display -->
+        <section class="mb-8 p-4 border border-orange-200 rounded-lg bg-white/50">
+            <h2 class="text-2xl font-semibold mb-3 text-orange-500">1. 動画の準備</h2>
+            <input type="file" id="fileInput" accept="video/*" class="block w-full text-sm text-slate-500
+              file:mr-4 file:py-2 file:px-4
+              file:rounded-lg file:border-0
+              file:text-sm file:font-semibold
+              file:bg-orange-100 file:text-orange-700
+              hover:file:bg-orange-200 disabled:opacity-50 transition-colors" disabled>
+            <p id="loadingTxt" class="text-sm text-gray-500 mt-2">AIモデルを読み込んでいます... 初回は数秒～数十秒かかることがあります。</p>
+            
+            <div class="mt-4 grid grid-cols-1 md:grid-cols-2 gap-4 items-start">
+                <div>
+                    <h3 class="text-lg font-medium text-gray-700 mb-1">オリジナル動画</h3>
+                    <video id="video" controls class="w-full rounded-md shadow-md aspect-video hidden bg-gray-200"></video>
+                </div>
+                <div>
+                    <h3 class="text-lg font-medium text-gray-700 mb-1">姿勢推定オーバーレイ</h3>
+                    <canvas id="poseCanvas" class="w-full rounded-md shadow-md aspect-video hidden bg-gray-200"></canvas>
+                </div>
+            </div>
+        </section>
+
+        <!-- Section 2: Recording Controls -->
+        <section class="mb-8 p-4 border border-orange-200 rounded-lg text-center bg-white/50">
+            <h2 class="text-2xl font-semibold mb-3 text-orange-500">2. 録画と座標取得</h2>
+            <button id="startButton" class="bg-orange-500 hover:bg-orange-600 text-white font-bold py-3 px-6 rounded-lg shadow-md disabled:opacity-50 transition-transform hover:scale-105" disabled>録画開始</button>
+            <button id="stopButton" class="bg-red-500 hover:bg-red-600 text-white font-bold py-3 px-6 rounded-lg shadow-md disabled:opacity-50 ml-2 transition-transform hover:scale-105" disabled>録画停止</button>
+            <a id="downloadLink" href="#" download="badminton_analysis.webm" class="hidden mt-4 inline-block bg-green-500 hover:bg-green-600 text-white font-bold py-3 px-6 rounded-lg shadow-md transition-transform hover:scale-105">録画をダウンロード</a>
+        </section>
+        
+        <!-- Section 2.5: Court Definition -->
+        <section id="courtDefinitionSection" class="mb-8 p-4 border border-orange-200 rounded-lg bg-white/50 hidden">
+            <h2 class="text-2xl font-semibold mb-3 text-orange-500">2.5 コート範囲の指定</h2>
+            <p id="courtDefinitionInstructions" class="text-sm text-gray-600 mb-2">「姿勢推定オーバーレイ」上でコートの四隅を 左上 → 右上 → 右下 → 左下 の順にクリックしてください。</p>
+            <button id="defineCourtButton" class="bg-indigo-500 hover:bg-indigo-600 text-white font-bold py-2 px-4 rounded-lg shadow-md mb-2 transition-transform hover:scale-105" disabled>コート範囲の指定を開始</button>
+            <button id="resetCourtButton" class="bg-gray-400 hover:bg-gray-500 text-white font-bold py-2 px-4 rounded-lg shadow-md mb-2 ml-2 transition-transform hover:scale-105 hidden">範囲をリセット</button>
+            <p id="courtDefinitionStatus" class="text-sm text-green-700 font-semibold mt-1"></p>
+        </section>
+
+        <!-- Section 3: Movement Analysis -->
+        <section id="analysisSection" class="mb-6 p-4 border border-orange-200 rounded-lg hidden bg-white/50">
+            <h2 class="text-2xl font-semibold mb-3 text-orange-500">3. 移動分析結果</h2>
+            <button id="analyzeButton" class="bg-blue-500 hover:bg-blue-600 text-white font-bold py-3 px-6 rounded-lg shadow-md w-full mb-4 transition-transform hover:scale-105" disabled>移動分析を開始・更新</button>
+
+            <div id="visualizationControls" class="mt-4 hidden">
+                <div class="mb-4">
+                    <label for="timeSlider" class="block mb-1 text-sm font-medium text-gray-700">表示する時間範囲 (スライダーで調整):</label>
+                    <input type="range" id="timeSlider" min="0" max="100" value="100" step="0.1" class="w-full h-3 bg-orange-200 rounded-lg appearance-none cursor-pointer">
+                    <div class="flex justify-between text-xs text-gray-500 mt-1">
+                        <span id="sliderMinTime">0.0s</span>
+                        <span id="sliderCurrentTimeLabel" class="font-semibold">現在: <span id="sliderCurrentTime">0.0s</span></span>
+                        <span id="sliderMaxTime">0.0s</span>
+                    </div>
+                </div>
+
+                <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 mt-4">
+                    <div>
+                        <h3 class="text-xl font-semibold mb-2 text-orange-500">移動軌跡 (全体)</h3>
+                        <p class="text-xs text-gray-500 mb-1">青: 左足首, 赤: 右足首</p>
+                        <canvas id="trajectoryCanvas" class="w-full aspect-video analysis-canvas rounded-md shadow"></canvas>
+                    </div>
+                    <div>
+                        <h3 class="text-xl font-semibold mb-2 text-orange-500">ヒートマップ</h3>
+                        <p class="text-xs text-gray-500 mb-1">滞在頻度が高いほど赤く表示</p>
+                        <canvas id="heatmapCanvas" class="w-full aspect-video analysis-canvas rounded-md shadow"></canvas>
+                    </div>
+                    <div id="courtTrajectoryContainer" class="hidden">
+                        <h3 class="text-xl font-semibold mb-2 text-orange-500">コート上での移動軌跡</h3>
+                        <p class="text-xs text-gray-500 mb-1">指定されたコート範囲に合わせて軌跡を表示</p>
+                        <canvas id="courtTrajectoryCanvas" class="w-full aspect-[610/1340] analysis-canvas rounded-md shadow"></canvas>
+                    </div>
+                </div>
+            </div>
+        </section>
+    </div>
+
+    <script type="module">
+        import {
+            PoseLandmarker,
+            FilesetResolver,
+            DrawingUtils
+        } from "https://cdn.skypack.dev/@mediapipe/tasks-vision@0.10.10";
+
+        // DOM Elements
+        const fileInput = document.getElementById('fileInput');
+        const video = document.getElementById('video');
+        const poseCanvas = document.getElementById('poseCanvas');
+        const startButton = document.getElementById('startButton');
+        const stopButton = document.getElementById('stopButton');
+        const downloadLink = document.getElementById('downloadLink');
+        const loadingTxt = document.getElementById('loadingTxt');
+        const analysisSection = document.getElementById('analysisSection');
+        const analyzeButton = document.getElementById('analyzeButton');
+        const visualizationControls = document.getElementById('visualizationControls');
+        const timeSlider = document.getElementById('timeSlider');
+        const sliderMinTime = document.getElementById('sliderMinTime');
+        const sliderCurrentTime = document.getElementById('sliderCurrentTime');
+        const sliderMaxTime = document.getElementById('sliderMaxTime');
+        const trajectoryCanvas = document.getElementById('trajectoryCanvas');
+        const heatmapCanvas = document.getElementById('heatmapCanvas');
+
+        // Court Definition DOM Elements
+        const courtDefinitionSection = document.getElementById('courtDefinitionSection');
+        const defineCourtButton = document.getElementById('defineCourtButton');
+        const resetCourtButton = document.getElementById('resetCourtButton');
+        const courtDefinitionInstructions = document.getElementById('courtDefinitionInstructions');
+        const courtDefinitionStatus = document.getElementById('courtDefinitionStatus');
+        const courtTrajectoryCanvas = document.getElementById('courtTrajectoryCanvas');
+        const courtTrajectoryContainer = document.getElementById('courtTrajectoryContainer');
+
+
+        // Canvas Contexts
+        let ctxPose = poseCanvas.getContext('2d');
+        let ctxTrajectory = trajectoryCanvas.getContext('2d');
+        let ctxHeatmap = heatmapCanvas.getContext('2d');
+        let ctxCourtTrajectory = courtTrajectoryCanvas.getContext('2d');
+        
+        // MediaRecorder & PoseLandmarker
+        let mediaRecorder;
+        let recordedChunks = [];
+        let poseLandmarker = null;
+        let drawingUtilsPose = null;
+        let runningMode = 'VIDEO';
+        let lastVideoTime = -1;
+        let anklePositions = []; 
+        let stream = null;
+
+        const HEATMAP_GRID_SIZE = 25; 
+        let videoDuration = 0;
+
+        // Court Definition Variables
+        let courtCornersOnVideoNormalized = []; // Stores {x,y} normalized 0-1 relative to video
+        let isDefiningCourt = false;
+        let transformationMatrix = null; 
+        const COURT_CANVAS_WIDTH = 305; // Logical width for court drawing (e.g., 6.1m / 20)
+        const COURT_CANVAS_HEIGHT = 670; // Logical height for court drawing (e.g., 13.4m / 20)
+
+
+        /**
+         * Initialize PoseLandmarker
+         */
+        async function initPoseLandmarker() {
+            try {
+                const vision = await FilesetResolver.forVisionTasks(
+                    "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.10/wasm"
+                );
+                poseLandmarker = await PoseLandmarker.createFromOptions(vision, {
+                    baseOptions: {
+                        modelAssetPath: "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task",
+                        delegate: "GPU"
+                    },
+                    runningMode: runningMode,
+                    numPoses: 1 
+                });
+                console.log("PoseLandmarker initialized");
+                loadingTxt.textContent = "モデル読み込み完了。動画を選択してください。";
+                fileInput.disabled = false;
+            } catch (err) {
+                console.error("Error initializing PoseLandmarker:", err);
+                loadingTxt.textContent = "モデル読み込みに失敗しました。ページをリロードしてください。";
+            }
+        }
+        initPoseLandmarker();
+
+        /**
+         * Handle file input change
+         */
+        fileInput.addEventListener('change', (event) => {
+            const file = event.target.files[0];
+            if (!file) return;
+
+            const fileURL = URL.createObjectURL(file);
+            video.src = fileURL;
+            video.style.display = 'block';
+            poseCanvas.style.display = 'block';
+            
+            video.onloadedmetadata = () => {
+                videoDuration = video.duration;
+                [poseCanvas, trajectoryCanvas, heatmapCanvas].forEach(cvs => {
+                    cvs.width = video.videoWidth;
+                    cvs.height = video.videoHeight;
+                });
+                // Set fixed logical size for court trajectory canvas, CSS will scale it
+                courtTrajectoryCanvas.width = COURT_CANVAS_WIDTH;
+                courtTrajectoryCanvas.height = COURT_CANVAS_HEIGHT;
+
+                drawingUtilsPose = new DrawingUtils(ctxPose);
+                startButton.disabled = false;
+                
+                // Reset analysis and court definition
+                analysisSection.classList.add('hidden');
+                visualizationControls.classList.add('hidden');
+                courtTrajectoryContainer.classList.add('hidden');
+                anklePositions = [];
+                recordedChunks = [];
+                downloadLink.classList.add('hidden');
+                
+                courtDefinitionSection.classList.remove('hidden');
+                defineCourtButton.disabled = false;
+                resetCourtDefinition();
+
+                loadingTxt.textContent = "動画の準備ができました。録画を開始するか、コート範囲を指定できます。";
+            };
+            video.onerror = () => {
+                console.error("Error loading video file.");
+                loadingTxt.textContent = "エラー: 動画ファイルの読み込みに失敗しました。";
+            }
+        });
+
+        /**
+         * Main drawing loop for pose estimation
+         */
+        async function drawFrame() {
+            if (!video || video.paused || video.ended || video.readyState < 2) {
+                requestAnimationFrame(drawFrame);
+                return;
+            }
+            
+            ctxPose.clearRect(0, 0, poseCanvas.width, poseCanvas.height);
+            ctxPose.drawImage(video, 0, 0, poseCanvas.width, poseCanvas.height);
+
+            if (poseLandmarker && video.currentTime !== lastVideoTime) {
+                const startTimeMs = performance.now();
+                lastVideoTime = video.currentTime;
+
+                poseLandmarker.detectForVideo(video, startTimeMs, (result) => {
+                    if (result.landmarks && result.landmarks.length > 0) {
+                        const landmarks = result.landmarks[0]; 
+                        
+                        if (drawingUtilsPose) {
+                            drawingUtilsPose.drawConnectors(landmarks, PoseLandmarker.POSE_CONNECTIONS, { color: '#FF8A65', lineWidth: 2 });
+                            drawingUtilsPose.drawLandmarks(landmarks, { color: '#FFAB91', radius: 3 });
+                        }
+
+                        if (mediaRecorder && mediaRecorder.state === "recording") {
+                            const leftAnkle = landmarks[27]; 
+                            const rightAnkle = landmarks[28];
+                            if (leftAnkle && rightAnkle) {
+                                anklePositions.push({
+                                    time: video.currentTime,
+                                    leftAnkle: { x: leftAnkle.x, y: leftAnkle.y, visibility: leftAnkle.visibility },
+                                    rightAnkle: { x: rightAnkle.x, y: rightAnkle.y, visibility: rightAnkle.visibility }
+                                });
+                            }
+                        }
+                    }
+                });
+            }
+
+            // Draw court definition markers if in defining mode or defined
+            drawCourtDefinitionMarkers();
+
+            requestAnimationFrame(drawFrame);
+        }
+        
+        video.addEventListener('play', () => {
+            lastVideoTime = -1; 
+            requestAnimationFrame(drawFrame);
+        });
+        
+        video.addEventListener('ended', () => {
+            if (mediaRecorder && mediaRecorder.state === 'recording') {
+                stopRecording();
+            }
+        });
+
+
+        /**
+         * Start Recording
+         */
+        startButton.addEventListener('click', () => {
+            if (poseCanvas.captureStream) {
+                stream = poseCanvas.captureStream(30);
+            } else if (video.captureStream) {
+                 stream = video.captureStream(30);
+            } else if (video.mozCaptureStream) {
+                stream = video.mozCaptureStream(30);
+            } else {
+                console.error("captureStream not supported.");
+                loadingTxt.textContent = "エラー: お使いのブラウザは録画機能に対応していません。";
+                return;
+            }
+
+            if (!stream) {
+                 console.error("Failed to get stream.");
+                 loadingTxt.textContent = "エラー: 録画ストリームの取得に失敗しました。";
+                 return;
+            }
+            video.play();
+            anklePositions = []; 
+            recordedChunks = [];
+            try {
+                mediaRecorder = new MediaRecorder(stream, { mimeType: 'video/webm; codecs=vp9' });
+            } catch (e) {
+                console.error("Error creating MediaRecorder:", e);
+                try {
+                    mediaRecorder = new MediaRecorder(stream, { mimeType: 'video/webm' });
+                } catch (e2) {
+                    console.error("Error creating MediaRecorder with fallback MIME type:", e2);
+                    loadingTxt.textContent = "エラー: MediaRecorderの作成に失敗しました。録画を開始できません。";
+                    return;
+                }
+            }
+
+            mediaRecorder.ondataavailable = (event) => {
+                if (event.data && event.data.size > 0) {
+                    recordedChunks.push(event.data);
+                }
+            };
+
+            mediaRecorder.onstop = () => {
+                const blob = new Blob(recordedChunks, { type: 'video/webm' });
+                const url = URL.createObjectURL(blob);
+                downloadLink.href = url;
+                downloadLink.classList.remove('hidden');
+                
+                analysisSection.classList.remove('hidden');
+                analyzeButton.disabled = false; // Enable analysis button
+                visualizationControls.classList.add('hidden'); // Hide controls until analysis is run
+
+                if (anklePositions.length > 0) {
+                    const maxTime = anklePositions[anklePositions.length - 1].time;
+                    timeSlider.max = maxTime.toFixed(1);
+                    timeSlider.value = maxTime.toFixed(1);
+                    sliderMaxTime.textContent = `${maxTime.toFixed(1)}s`;
+                    sliderCurrentTime.textContent = `${maxTime.toFixed(1)}s`;
+                } else {
+                     timeSlider.max = videoDuration.toFixed(1);
+                     timeSlider.value = videoDuration.toFixed(1);
+                     sliderMaxTime.textContent = `${videoDuration.toFixed(1)}s`;
+                     sliderCurrentTime.textContent = `${videoDuration.toFixed(1)}s`;
+                }
+                sliderMinTime.textContent = "0.0s";
+                loadingTxt.textContent = "録画が完了しました。移動分析を開始できます。";
+            };
+            
+            mediaRecorder.onerror = (event) => {
+                console.error("MediaRecorder error:", event.error);
+                loadingTxt.textContent = `エラー: 録画中にエラーが発生しました: ${event.error.name}`;
+                stopRecording();
+            };
+
+            mediaRecorder.start();
+            loadingTxt.textContent = "録画中です...";
+            startButton.disabled = true;
+            stopButton.disabled = false;
+            downloadLink.classList.add('hidden');
+            analyzeButton.disabled = true; 
+        });
+
+        function stopRecording() {
+            if (mediaRecorder && mediaRecorder.state === 'recording') {
+                mediaRecorder.stop();
+            }
+            if (stream) {
+                stream.getTracks().forEach(track => track.stop());
+                stream = null; 
+            }
+            startButton.disabled = false;
+            stopButton.disabled = true;
+        }
+        stopButton.addEventListener('click', stopRecording);
+
+        /**
+         * Court Definition Logic
+         */
+        defineCourtButton.addEventListener('click', () => {
+            isDefiningCourt = true;
+            courtCornersOnVideoNormalized = [];
+            transformationMatrix = null;
+            courtDefinitionInstructions.textContent = "「姿勢推定オーバーレイ」上でコートの 左上 の角をクリックしてください (1/4)。";
+            courtDefinitionStatus.textContent = "";
+            poseCanvas.style.cursor = 'crosshair';
+            defineCourtButton.disabled = true;
+            resetCourtButton.classList.remove('hidden');
+            courtTrajectoryContainer.classList.add('hidden'); // Hide court trajectory view
+        });
+
+        resetCourtButton.addEventListener('click', resetCourtDefinition);
+
+        function resetCourtDefinition() {
+            isDefiningCourt = false;
+            courtCornersOnVideoNormalized = [];
+            transformationMatrix = null;
+            courtDefinitionInstructions.textContent = "「姿勢推定オーバーレイ」上でコートの四隅を 左上 → 右上 → 右下 → 左下 の順にクリックしてください。";
+            courtDefinitionStatus.textContent = "";
+            poseCanvas.style.cursor = 'default';
+            defineCourtButton.disabled = false;
+            resetCourtButton.classList.add('hidden');
+            courtTrajectoryContainer.classList.add('hidden');
+            // Clear any drawn court markers on poseCanvas by forcing a redraw if needed, though drawFrame handles it
+        }
+        
+        poseCanvas.addEventListener('click', (event) => {
+            if (!isDefiningCourt || courtCornersOnVideoNormalized.length >= 4) return;
+
+            const rect = poseCanvas.getBoundingClientRect();
+            const x = (event.clientX - rect.left) / poseCanvas.width;
+            const y = (event.clientY - rect.top) / poseCanvas.height;
+            
+            courtCornersOnVideoNormalized.push({ x, y });
+
+            const cornersCount = courtCornersOnVideoNormalized.length;
+            if (cornersCount < 4) {
+                const cornerNames = ["右上", "右下", "左下"];
+                courtDefinitionInstructions.textContent = `コートの ${cornerNames[cornersCount-1]} の角をクリックしてください (${cornersCount + 1}/4)。`;
+            } else {
+                isDefiningCourt = false;
+                poseCanvas.style.cursor = 'default';
+                courtDefinitionStatus.textContent = 'コートの四隅が指定されました。分析を更新するとコート軌跡が表示されます。';
+                defineCourtButton.disabled = false; 
+                
+                // Calculate transformation matrix
+                const srcPts = courtCornersOnVideoNormalized.map(p => ({
+                    x: p.x * poseCanvas.width,
+                    y: p.y * poseCanvas.height
+                }));
+                const dstPts = [
+                    { x: 0, y: 0 },
+                    { x: COURT_CANVAS_WIDTH, y: 0 },
+                    { x: COURT_CANVAS_WIDTH, y: COURT_CANVAS_HEIGHT },
+                    { x: 0, y: COURT_CANVAS_HEIGHT }
+                ];
+                transformationMatrix = getPerspectiveTransform(srcPts, dstPts);
+                if (!transformationMatrix) {
+                    courtDefinitionStatus.textContent = 'エラー: 変換行列を計算できませんでした。点の指定を確認してください。';
+                    console.error("Failed to compute transformation matrix.");
+                } else {
+                    console.log("Transformation matrix calculated:", transformationMatrix);
+                    // Optionally, immediately update analysis if data exists
+                    if (anklePositions.length > 0 && !analyzeButton.disabled) {
+                        drawAnalysis(parseFloat(timeSlider.value));
+                    }
+                }
+            }
+        });
+
+        function drawCourtDefinitionMarkers() {
+            if (courtCornersOnVideoNormalized.length === 0) return;
+            
+            ctxPose.save(); // Save current context state
+            ctxPose.lineWidth = 2;
+            
+            // Draw clicked points
+            for (let i = 0; i < courtCornersOnVideoNormalized.length; i++) {
+                const corner = courtCornersOnVideoNormalized[i];
+                const x = corner.x * poseCanvas.width;
+                const y = corner.y * poseCanvas.height;
+                
+                ctxPose.beginPath();
+                ctxPose.arc(x, y, 5, 0, 2 * Math.PI);
+                ctxPose.fillStyle = 'rgba(220, 38, 38, 0.8)'; // Red-600
+                ctxPose.fill();
+                ctxPose.strokeStyle = 'white';
+                ctxPose.stroke();
+                
+                ctxPose.fillStyle = 'white';
+                ctxPose.font = 'bold 12px Arial';
+                ctxPose.textAlign = 'center';
+                ctxPose.fillText((i + 1).toString(), x, y - 8);
+            }
+
+            // Draw lines connecting points
+            if (courtCornersOnVideoNormalized.length > 1) {
+                ctxPose.strokeStyle = 'rgba(220, 38, 38, 0.8)';
+                ctxPose.beginPath();
+                const firstPt = courtCornersOnVideoNormalized[0];
+                ctxPose.moveTo(firstPt.x * poseCanvas.width, firstPt.y * poseCanvas.height);
+                for (let i = 1; i < courtCornersOnVideoNormalized.length; i++) {
+                    const pt = courtCornersOnVideoNormalized[i];
+                    ctxPose.lineTo(pt.x * poseCanvas.width, pt.y * poseCanvas.height);
+                }
+                if (courtCornersOnVideoNormalized.length === 4) { // If 4 points, close the quadrilateral
+                    ctxPose.lineTo(firstPt.x * poseCanvas.width, firstPt.y * poseCanvas.height);
+                }
+                ctxPose.stroke();
+            }
+            ctxPose.restore(); // Restore context state
+        }
+
+
+        /**
+         * Analyze Button Click
+         */
+        analyzeButton.addEventListener('click', () => {
+            if (anklePositions.length === 0) {
+                loadingTxt.textContent = "情報: 分析データがありません。先に動画を録画してください。";
+                return;
+            }
+            visualizationControls.classList.remove('hidden');
+            if (transformationMatrix) {
+                courtTrajectoryContainer.classList.remove('hidden');
+            } else {
+                courtTrajectoryContainer.classList.add('hidden');
+            }
+            drawAnalysis(parseFloat(timeSlider.value));
+            loadingTxt.textContent = "移動分析結果を表示しています。";
+        });
+
+        timeSlider.addEventListener('input', () => {
+            const currentTime = parseFloat(timeSlider.value);
+            sliderCurrentTime.textContent = `${currentTime.toFixed(1)}s`;
+            if (!visualizationControls.classList.contains('hidden')) { 
+                 drawAnalysis(currentTime);
+            }
+        });
+        
+        /**
+         * Draw Analysis (Trajectory, Heatmap, and Court Trajectory)
+         */
+        function drawAnalysis(currentTime) {
+            ctxTrajectory.clearRect(0, 0, trajectoryCanvas.width, trajectoryCanvas.height);
+            ctxHeatmap.clearRect(0, 0, heatmapCanvas.width, heatmapCanvas.height);
+            if (transformationMatrix) {
+                 ctxCourtTrajectory.clearRect(0, 0, courtTrajectoryCanvas.width, courtTrajectoryCanvas.height);
+            }
+
+            const filteredPositions = anklePositions.filter(p => p.time <= currentTime);
+            
+            if (filteredPositions.length === 0) {
+                loadingTxt.textContent = "情報: 選択した時間範囲に座標データがありません。";
+                 // Display message on canvases
+                [ctxTrajectory, ctxHeatmap].forEach(ctx => {
+                    const canvas = ctx.canvas;
+                    ctx.font = "16px Arial";
+                    ctx.fillStyle = "gray";
+                    ctx.textAlign = "center";
+                    ctx.fillText("この時間範囲に表示できるデータがありません。", canvas.width / 2, canvas.height / 2);
+                });
+                 if (transformationMatrix) {
+                    ctxCourtTrajectory.font = "12px Arial"; // Smaller font for smaller canvas
+                    ctxCourtTrajectory.fillStyle = "gray";
+                    ctxCourtTrajectory.textAlign = "center";
+                    drawBadmintonCourt(ctxCourtTrajectory, COURT_CANVAS_WIDTH, COURT_CANVAS_HEIGHT); // Draw court structure
+                    ctxCourtTrajectory.fillStyle = "gray"; // Set fillStyle again after court drawing
+                    ctxCourtTrajectory.fillText("データなし", COURT_CANVAS_WIDTH / 2, COURT_CANVAS_HEIGHT / 2);
+                 }
+            } else {
+                loadingTxt.textContent = "移動分析結果を表示中...";
+                drawTrajectory(filteredPositions);
+                drawHeatmap(filteredPositions);
+                if (transformationMatrix) {
+                    drawTrajectoryOnCourt(filteredPositions);
+                }
+            }
+        }
+
+        function drawTrajectory(positions) {
+            // ... (Original drawTrajectory code remains the same)
+            ctxTrajectory.lineWidth = 2;
+            ctxTrajectory.strokeStyle = 'rgba(59, 130, 246, 0.8)'; 
+            ctxTrajectory.beginPath();
+            let firstLeft = true;
+            for (const pos of positions) {
+                if (pos.leftAnkle) {
+                    const x = pos.leftAnkle.x * trajectoryCanvas.width;
+                    const y = pos.leftAnkle.y * trajectoryCanvas.height;
+                    if (firstLeft) {
+                        ctxTrajectory.moveTo(x, y);
+                        firstLeft = false;
+                    } else {
+                        ctxTrajectory.lineTo(x, y);
+                    }
+                } else { 
+                    firstLeft = true;
+                }
+            }
+            ctxTrajectory.stroke();
+
+            ctxTrajectory.strokeStyle = 'rgba(239, 68, 68, 0.8)'; 
+            ctxTrajectory.beginPath();
+            let firstRight = true;
+            for (const pos of positions) {
+                if (pos.rightAnkle) {
+                    const x = pos.rightAnkle.x * trajectoryCanvas.width;
+                    const y = pos.rightAnkle.y * trajectoryCanvas.height;
+                    if (firstRight) {
+                        ctxTrajectory.moveTo(x, y);
+                        firstRight = false;
+                    } else {
+                        ctxTrajectory.lineTo(x, y);
+                    }
+                } else {
+                    firstRight = true;
+                }
+            }
+            ctxTrajectory.stroke();
+        }
+
+        function drawHeatmap(positions) {
+            // ... (Original drawHeatmap code remains the same)
+            const gridW = heatmapCanvas.width / HEATMAP_GRID_SIZE;
+            const gridH = heatmapCanvas.height / HEATMAP_GRID_SIZE;
+            const heatmapData = Array(HEATMAP_GRID_SIZE).fill(null).map(() => Array(HEATMAP_GRID_SIZE).fill(0));
+            let maxHits = 0;
+
+            for (const pos of positions) {
+                if (pos.leftAnkle) {
+                    const gridX = Math.min(HEATMAP_GRID_SIZE - 1, Math.max(0, Math.floor(pos.leftAnkle.x * HEATMAP_GRID_SIZE)));
+                    const gridY = Math.min(HEATMAP_GRID_SIZE - 1, Math.max(0, Math.floor(pos.leftAnkle.y * HEATMAP_GRID_SIZE)));
+                    heatmapData[gridY][gridX]++;
+                    if (heatmapData[gridY][gridX] > maxHits) maxHits = heatmapData[gridY][gridX];
+                }
+                if (pos.rightAnkle) {
+                    const gridX = Math.min(HEATMAP_GRID_SIZE - 1, Math.max(0, Math.floor(pos.rightAnkle.x * HEATMAP_GRID_SIZE)));
+                    const gridY = Math.min(HEATMAP_GRID_SIZE - 1, Math.max(0, Math.floor(pos.rightAnkle.y * HEATMAP_GRID_SIZE)));
+                    heatmapData[gridY][gridX]++;
+                    if (heatmapData[gridY][gridX] > maxHits) maxHits = heatmapData[gridY][gridX];
+                }
+            }
+
+            if (maxHits === 0) return; 
+
+            for (let y = 0; y < HEATMAP_GRID_SIZE; y++) {
+                for (let x = 0; x < HEATMAP_GRID_SIZE; x++) {
+                    if (heatmapData[y][x] > 0) {
+                        const intensity = heatmapData[y][x] / maxHits;
+                        const r = Math.floor(255 * Math.min(1, intensity * 1.5)); 
+                        const g = Math.floor(255 * Math.max(0, (1 - intensity * 1.5))); 
+                        const b = 0; 
+                        ctxHeatmap.fillStyle = `rgba(${r}, ${g}, ${b}, ${Math.max(0.1, intensity * 0.8)})`; 
+                        ctxHeatmap.fillRect(x * gridW, y * gridH, gridW, gridH);
+                    }
+                }
+            }
+        }
+
+        /**
+         * Draw Badminton Court Structure and Trajectory on Court Canvas
+         */
+        function drawBadmintonCourt(ctx, width, height) {
+            ctx.clearRect(0, 0, width, height); // Clear before drawing
+            ctx.fillStyle = '#f0fdf4'; // Tailwind green-50
+            ctx.fillRect(0, 0, width, height);
+
+            ctx.strokeStyle = '#6b7280'; // Gray-500 for lines
+            ctx.lineWidth = 1; // Thinner lines for smaller canvas
+
+            // Badminton court dimensions (scaled to canvas)
+            // Full court: 13.4m x 6.1m (doubles)
+            const scaleFactorX = width / 6.1;
+            const scaleFactorY = height / 13.4;
+
+            // Outer boundary (doubles)
+            ctx.strokeRect(0, 0, width, height);
+
+            // Net line
+            const netY = height / 2;
+            ctx.beginPath(); ctx.moveTo(0, netY); ctx.lineTo(width, netY); ctx.stroke();
+
+            // Center line
+            ctx.beginPath(); ctx.moveTo(width / 2, 0); ctx.lineTo(width / 2, height); ctx.stroke();
+            
+            // Short service line (1.98m from net)
+            const shortServiceLineOffsetY = 1.98 * scaleFactorY;
+            ctx.beginPath(); ctx.moveTo(0, netY + shortServiceLineOffsetY); ctx.lineTo(width, netY + shortServiceLineOffsetY); ctx.stroke();
+            ctx.beginPath(); ctx.moveTo(0, netY - shortServiceLineOffsetY); ctx.lineTo(width, netY - shortServiceLineOffsetY); ctx.stroke();
+
+            // Singles side lines (0.46m inwards from doubles outer lines)
+            const singlesSideLineOffsetX = 0.46 * scaleFactorX;
+            ctx.beginPath(); ctx.moveTo(singlesSideLineOffsetX, 0); ctx.lineTo(singlesSideLineOffsetX, height); ctx.stroke();
+            ctx.beginPath(); ctx.moveTo(width - singlesSideLineOffsetX, 0); ctx.lineTo(width - singlesSideLineOffsetX, height); ctx.stroke();
+            
+            // Doubles long service line (0.76m from back boundary, relevant for doubles service)
+            // This line is INSIDE the singles side lines for doubles service.
+            const doublesLongServiceLineFromBack = 0.76 * scaleFactorY;
+            ctx.beginPath(); ctx.moveTo(singlesSideLineOffsetX, height - doublesLongServiceLineFromBack); ctx.lineTo(width-singlesSideLineOffsetX, height - doublesLongServiceLineFromBack); ctx.stroke();
+            ctx.beginPath(); ctx.moveTo(singlesSideLineOffsetX, doublesLongServiceLineFromBack); ctx.lineTo(width-singlesSideLineOffsetX, doublesLongServiceLineFromBack); ctx.stroke();
+        }
+
+        function drawTrajectoryOnCourt(positions) {
+            if (!transformationMatrix) return;
+
+            drawBadmintonCourt(ctxCourtTrajectory, COURT_CANVAS_WIDTH, COURT_CANVAS_HEIGHT);
+
+            ctxCourtTrajectory.lineWidth = 1.5; // Slightly thinner for court view
+
+            // Draw Left Ankle Trajectory (Blue)
+            ctxCourtTrajectory.strokeStyle = 'rgba(59, 130, 246, 0.9)'; // Tailwind blue-500
+            ctxCourtTrajectory.beginPath();
+            let firstLeftCourt = true;
+            for (const pos of positions) {
+                if (pos.leftAnkle) {
+                    const videoPt = { x: pos.leftAnkle.x * poseCanvas.width, y: pos.leftAnkle.y * poseCanvas.height };
+                    const courtPt = transformPoint(videoPt, transformationMatrix);
+                    if (courtPt) {
+                        if (firstLeftCourt) {
+                            ctxCourtTrajectory.moveTo(courtPt.x, courtPt.y);
+                            firstLeftCourt = false;
+                        } else {
+                            ctxCourtTrajectory.lineTo(courtPt.x, courtPt.y);
+                        }
+                    } else {
+                        firstLeftCourt = true; // Reset if point is outside or invalid
+                    }
+                } else {
+                    firstLeftCourt = true;
+                }
+            }
+            ctxCourtTrajectory.stroke();
+
+            // Draw Right Ankle Trajectory (Red)
+            ctxCourtTrajectory.strokeStyle = 'rgba(239, 68, 68, 0.9)'; // Tailwind red-500
+            ctxCourtTrajectory.beginPath();
+            let firstRightCourt = true;
+            for (const pos of positions) {
+                if (pos.rightAnkle) {
+                    const videoPt = { x: pos.rightAnkle.x * poseCanvas.width, y: pos.rightAnkle.y * poseCanvas.height };
+                    const courtPt = transformPoint(videoPt, transformationMatrix);
+                     if (courtPt) {
+                        if (firstRightCourt) {
+                            ctxCourtTrajectory.moveTo(courtPt.x, courtPt.y);
+                            firstRightCourt = false;
+                        } else {
+                            ctxCourtTrajectory.lineTo(courtPt.x, courtPt.y);
+                        }
+                    } else {
+                        firstRightCourt = true;
+                    }
+                } else {
+                    firstRightCourt = true;
+                }
+            }
+            ctxCourtTrajectory.stroke();
+        }
+
+        /**
+         * Perspective Transformation Functions
+         */
+        function getPerspectiveTransform(srcPts, dstPts) {
+            // srcPts and dstPts are arrays of 4 points {x, y}
+            // Builds the A matrix for the system Ah = b
+            let A = [];
+            let bVec = []; // Renamed to avoid conflict with heatmap 'b'
+
+            for (let i = 0; i < 4; i++) {
+                let { x: sx, y: sy } = srcPts[i];
+                let { x: dx, y: dy } = dstPts[i];
+                A.push([sx, sy, 1, 0,  0,  0, -dx * sx, -dx * sy]);
+                bVec.push(dx);
+                A.push([0,  0,  0, sx, sy, 1, -dy * sx, -dy * sy]);
+                bVec.push(dy);
+            }
+
+            let h = solveLinearSystem(A, bVec);
+            if (!h || h.length !== 8) {
+                 console.error("Failed to solve for perspective transform matrix elements or incorrect number of elements.");
+                 return null;
+            }
+
+            return [
+                [h[0], h[1], h[2]],
+                [h[3], h[4], h[5]],
+                [h[6], h[7], 1.0] // h22 is 1
+            ];
+        }
+
+        function transformPoint(point, matrix) {
+            if (!matrix) return null;
+            let { x, y } = point;
+            let [m0, m1, m2] = matrix;
+
+            let w = m2[0] * x + m2[1] * y + m2[2];
+            if (Math.abs(w) < 1e-6) return null; // Avoid division by zero or very small w
+
+            let tx = (m0[0] * x + m0[1] * y + m0[2]) / w;
+            let ty = (m1[0] * x + m1[1] * y + m1[2]) / w;
+            
+            return { x: tx, y: ty };
+        }
+        
+        // Solves Ax = b using Gaussian elimination with partial pivoting
+        function solveLinearSystem(A_orig, b_orig) {
+            const n = A_orig.length;
+            if (n === 0 || A_orig[0].length !== n || b_orig.length !== n) {
+                console.error("Invalid matrix or vector dimensions for solveLinearSystem.");
+                return null;
+            }
+
+            // Create copies to avoid modifying originals
+            let A = A_orig.map(row => [...row]);
+            let b = [...b_orig];
+
+            for (let i = 0; i < n; i++) {
+                // Partial pivoting: find row with max element in current column
+                let maxRow = i;
+                for (let k = i + 1; k < n; k++) {
+                    if (Math.abs(A[k][i]) > Math.abs(A[maxRow][i])) {
+                        maxRow = k;
+                    }
+                }
+                // Swap rows in A and b
+                [A[i], A[maxRow]] = [A[maxRow], A[i]];
+                [b[i], b[maxRow]] = [b[maxRow], b[i]];
+
+                // Check for singularity
+                if (Math.abs(A[i][i]) < 1e-9) { // If pivot is too small
+                    console.error("Matrix is singular or near-singular; cannot solve reliably.");
+                    return null; 
+                }
+
+                // Normalize current row (pivot becomes 1)
+                let pivot = A[i][i];
+                for (let j = i; j < n; j++) {
+                    A[i][j] /= pivot;
+                }
+                b[i] /= pivot;
+
+                // Eliminate other rows
+                for (let k = 0; k < n; k++) {
+                    if (k !== i) {
+                        let factor = A[k][i];
+                        for (let j = i; j < n; j++) {
+                            A[k][j] -= factor * A[i][j];
+                        }
+                        b[k] -= factor * b[i];
+                    }
+                }
+            }
+            return b; // The solution vector x is now in b
+        }
+
+    </script>
+</body>
+</html>

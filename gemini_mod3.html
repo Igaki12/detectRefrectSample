@@ -429,7 +429,6 @@
             console.log("Drawing analysis for time:", currentTime);
             console.log("Ankle positions:")
             console.log(anklePositions); // Log all ankle positions
-            // const filteredPositions = anklePositions.filter(p => p.time <= currentTime && (p.leftAnkle.visibility > 0.5 || p.rightAnkle.visibility > 0.5)); ← visibilityは不要
             const filteredPositions = anklePositions.filter(p => p.time <= currentTime);
             console.log("Filtered positions:", filteredPositions); // Log filtered positions
             if (filteredPositions.length === 0) {
@@ -466,7 +465,6 @@
             ctxTrajectory.beginPath();
             let firstLeft = true;
             for (const pos of positions) {
-                // if (pos.leftAnkle && pos.leftAnkle.visibility > 0.5) { ← visibilityは不要
                 if (pos.leftAnkle) {
                     const x = pos.leftAnkle.x * trajectoryCanvas.width;
                     const y = pos.leftAnkle.y * trajectoryCanvas.height;
@@ -487,7 +485,6 @@
             ctxTrajectory.beginPath();
             let firstRight = true;
             for (const pos of positions) {
-                // if (pos.rightAnkle && pos.rightAnkle.visibility > 0.5) { // ← visibilityは不要
                 if (pos.rightAnkle) {
                     const x = pos.rightAnkle.x * trajectoryCanvas.width;
                     const y = pos.rightAnkle.y * trajectoryCanvas.height;
@@ -516,14 +513,12 @@
             let maxHits = 0;
 
             for (const pos of positions) {
-                // if (pos.leftAnkle && pos.leftAnkle.visibility > 0.5) { // ← visibilityは不要
                 if (pos.leftAnkle) {
                     const gridX = Math.min(HEATMAP_GRID_SIZE - 1, Math.max(0, Math.floor(pos.leftAnkle.x * HEATMAP_GRID_SIZE)));
                     const gridY = Math.min(HEATMAP_GRID_SIZE - 1, Math.max(0, Math.floor(pos.leftAnkle.y * HEATMAP_GRID_SIZE)));
                     heatmapData[gridY][gridX]++;
                     if (heatmapData[gridY][gridX] > maxHits) maxHits = heatmapData[gridY][gridX];
                 }
-                //if (pos.rightAnkle && pos.rightAnkle.visibility > 0.5) {
                 if (pos.rightAnkle) {
                     const gridX = Math.min(HEATMAP_GRID_SIZE - 1, Math.max(0, Math.floor(pos.rightAnkle.x * HEATMAP_GRID_SIZE)));
                     const gridY = Math.min(HEATMAP_GRID_SIZE - 1, Math.max(0, Math.floor(pos.rightAnkle.y * HEATMAP_GRID_SIZE)));

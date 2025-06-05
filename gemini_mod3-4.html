@@ -1,0 +1,896 @@
+<!DOCTYPE html>
+<html lang="ja">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>バドミントン動作分析アプリ</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        /* カスタムCSS */
+        body {
+            font-family: 'Inter', 'Helvetica Neue', Arial, sans-serif;
+        }
+
+        /* スライダーのつまみのスタイル */
+        input[type="range"]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            appearance: none;
+            width: 20px;
+            height: 20px;
+            background: #fb923c; /* orange-400 */
+            cursor: pointer;
+            border-radius: 50%;
+            border: 2px solid white;
+            box-shadow: 0 0 2px rgba(0,0,0,0.3);
+        }
+
+        input[type="range"]::-moz-range-thumb {
+            width: 18px; /* Firefoxはborderを内側に描画するため少し小さく */
+            height: 18px;
+            background: #fb923c;
+            cursor: pointer;
+            border-radius: 50%;
+            border: 2px solid white;
+            box-shadow: 0 0 2px rgba(0,0,0,0.3);
+        }
+
+        .analysis-canvas {
+            border: 1px solid #e5e7eb; /* gray-200 */
+            background-color: #f9fafb; /* gray-50 */
+        }
+
+        .container {
+            max-width: 900px;
+        }
+
+        h1, h2, h3 {
+            text-shadow: 1px 1px 2px rgba(0, 0, 0, 0.1);
+        }
+
+        /* Trimming Handle Style */
+        .trimming-handle {
+            cursor: grab;
+        }
+        .trimming-handle:active {
+            cursor: grabbing;
+        }
+    </style>
+</head>
+
+<body class="bg-gradient-to-br from-orange-100 via-amber-100 to-yellow-100 text-gray-800 p-4 min-h-screen flex items-center justify-center">
+    <div class="container mx-auto bg-white bg-opacity-70 p-6 rounded-xl shadow-2xl w-full">
+        <header class="text-center mb-8">
+            <h1 class="text-4xl font-bold text-orange-600">バドミントン動作分析</h1>
+            <p class="text-gray-600 mt-1">動画から選手の動きを捉え、軌跡とヒートマップで可視化します。</p>
+        </header>
+
+        <!-- Section 1: Video Upload and Display -->
+        <section class="mb-8 p-4 border border-orange-200 rounded-lg bg-white/50">
+            <h2 class="text-2xl font-semibold mb-3 text-orange-500">1. 動画の準備</h2>
+            <input type="file" id="fileInput" accept="video/*" class="block w-full text-sm text-slate-500
+              file:mr-4 file:py-2 file:px-4
+              file:rounded-lg file:border-0
+              file:text-sm file:font-semibold
+              file:bg-orange-100 file:text-orange-700
+              hover:file:bg-orange-200 disabled:opacity-50 transition-colors" disabled>
+            <p id="loadingTxt" class="text-sm text-gray-500 mt-2">AIモデルを読み込んでいます... 初回は数秒～数十秒かかることがあります。</p>
+              
+            <div class="mt-4 grid grid-cols-1 md:grid-cols-2 gap-4 items-start">
+                <div>
+                    <h3 class="text-lg font-medium text-gray-700 mb-1">オリジナル動画 / 範囲選択</h3>
+                    <video id="video" controls class="w-full rounded-md shadow-md aspect-video hidden bg-gray-200"></video>
+                </div>
+                <div>
+                    <h3 class="text-lg font-medium text-gray-700 mb-1">姿勢推定オーバーレイ</h3>
+                    <canvas id="poseCanvas" class="w-full rounded-md shadow-md aspect-video hidden bg-gray-200"></canvas>
+                    <!-- Note: poseCanvas is used for trimming interaction when isTrimmingMode is true -->
+                </div>
+            </div>
+        </section>
+
+        <!-- Section 2: Recording Controls -->
+        <section class="mb-8 p-4 border border-orange-200 rounded-lg text-center bg-white/50">
+            <h2 class="text-2xl font-semibold mb-3 text-orange-500">2. 録画と座標取得</h2>
+            <button id="startButton" class="bg-orange-500 hover:bg-orange-600 text-white font-bold py-3 px-6 rounded-lg shadow-md disabled:opacity-50 transition-transform hover:scale-105" disabled>録画開始</button>
+            <button id="stopButton" class="bg-red-500 hover:bg-red-600 text-white font-bold py-3 px-6 rounded-lg shadow-md disabled:opacity-50 ml-2 transition-transform hover:scale-105" disabled>録画停止</button>
+            <a id="downloadLink" href="#" download="badminton_analysis.webm" class="hidden mt-4 inline-block bg-green-500 hover:bg-green-600 text-white font-bold py-3 px-6 rounded-lg shadow-md transition-transform hover:scale-105">録画をダウンロード</a>
+        </section>
+
+        <!-- Section 2.5: Court Trimming -->
+        <section id="trimmingSection" class="mb-8 p-4 border border-purple-300 rounded-lg bg-white/50 hidden">
+            <h2 class="text-2xl font-semibold mb-3 text-purple-600">2.5. コート範囲の調整</h2>
+            <p class="text-sm text-gray-600 mb-2">動画内のバドミントンコートの四隅をビデオプレビュー上でドラッグして指定し、座標を補正します。</p>
+            <div class="flex flex-col sm:flex-row gap-2 mb-4">
+                <button id="startTrimmingButton" class="bg-purple-500 hover:bg-purple-600 text-white font-bold py-2 px-4 rounded-lg shadow-md transition-transform hover:scale-105 flex-1" disabled>コート範囲の調整開始</button>
+                <button id="applyCorrectionButton" class="bg-teal-500 hover:bg-teal-600 text-white font-bold py-2 px-4 rounded-lg shadow-md transition-transform hover:scale-105 flex-1" disabled>座標を補正して再描画</button>
+                <button id="resetTrimmingButton" class="bg-gray-400 hover:bg-gray-500 text-white font-bold py-2 px-4 rounded-lg shadow-md transition-transform hover:scale-105 flex-1" disabled>調整をリセット</button>
+            </div>
+            <p id="trimmingInstructions" class="text-sm text-purple-700 mb-2 h-4"></p>
+            <!-- Video element is used for trimming interaction background, poseCanvas for overlay -->
+        </section>
+
+        <!-- Section 3: Movement Analysis -->
+        <section id="analysisSection" class="mb-6 p-4 border border-orange-200 rounded-lg hidden bg-white/50">
+            <h2 class="text-2xl font-semibold mb-3 text-orange-500">3. 移動分析結果</h2>
+            <button id="analyzeButton" class="bg-blue-500 hover:bg-blue-600 text-white font-bold py-3 px-6 rounded-lg shadow-md w-full mb-4 transition-transform hover:scale-105" disabled>移動分析を開始・更新</button>
+
+            <div id="visualizationControls" class="mt-4 hidden">
+                <div class="mb-4">
+                    <label for="timeSlider" class="block mb-1 text-sm font-medium text-gray-700">表示する時間範囲 (スライダーで調整):</label>
+                    <input type="range" id="timeSlider" min="0" max="100" value="100" step="0.1" class="w-full h-3 bg-orange-200 rounded-lg appearance-none cursor-pointer">
+                    <div class="flex justify-between text-xs text-gray-500 mt-1">
+                        <span id="sliderMinTime">0.0s</span>
+                        <span id="sliderCurrentTimeLabel" class="font-semibold">現在: <span id="sliderCurrentTime">0.0s</span></span>
+                        <span id="sliderMaxTime">0.0s</span>
+                    </div>
+                </div>
+
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mt-4">
+                    <div>
+                        <h3 class="text-xl font-semibold mb-2 text-orange-500">移動軌跡</h3>
+                        <p class="text-xs text-gray-500 mb-1">青: 左足首, 赤: 右足首 (コート枠内に補正表示)</p>
+                        <canvas id="trajectoryCanvas" class="w-full aspect-video analysis-canvas rounded-md shadow"></canvas>
+                    </div>
+                    <div>
+                        <h3 class="text-xl font-semibold mb-2 text-orange-500">ヒートマップ</h3>
+                        <p class="text-xs text-gray-500 mb-1">滞在頻度が高いほど赤く表示 (コート枠内に補正表示)</p>
+                        <canvas id="heatmapCanvas" class="w-full aspect-video analysis-canvas rounded-md shadow"></canvas>
+                    </div>
+                </div>
+            </div>
+        </section>
+    </div>
+
+    <script type="module">
+        import {
+            PoseLandmarker,
+            FilesetResolver,
+            DrawingUtils
+        } from "https://cdn.skypack.dev/@mediapipe/tasks-vision@0.10.10";
+
+        // DOM Elements
+        const fileInput = document.getElementById('fileInput');
+        const video = document.getElementById('video');
+        const poseCanvas = document.getElementById('poseCanvas'); // Used for pose AND trimming overlay
+        const startButton = document.getElementById('startButton');
+        const stopButton = document.getElementById('stopButton');
+        const downloadLink = document.getElementById('downloadLink');
+        const loadingTxt = document.getElementById('loadingTxt');
+        const analysisSection = document.getElementById('analysisSection');
+        const analyzeButton = document.getElementById('analyzeButton');
+        const visualizationControls = document.getElementById('visualizationControls');
+        const timeSlider = document.getElementById('timeSlider');
+        const sliderMinTime = document.getElementById('sliderMinTime');
+        const sliderCurrentTime = document.getElementById('sliderCurrentTime');
+        const sliderMaxTime = document.getElementById('sliderMaxTime');
+        const trajectoryCanvas = document.getElementById('trajectoryCanvas');
+        const heatmapCanvas = document.getElementById('heatmapCanvas');
+
+        // Trimming UI Elements
+        const trimmingSection = document.getElementById('trimmingSection');
+        const startTrimmingButton = document.getElementById('startTrimmingButton');
+        const applyCorrectionButton = document.getElementById('applyCorrectionButton');
+        const resetTrimmingButton = document.getElementById('resetTrimmingButton');
+        const trimmingInstructions = document.getElementById('trimmingInstructions');
+
+        // Canvas Contexts
+        let ctxPose = poseCanvas.getContext('2d');
+        let ctxTrajectory = trajectoryCanvas.getContext('2d');
+        let ctxHeatmap = heatmapCanvas.getContext('2d');
+          
+        // MediaRecorder & PoseLandmarker
+        let mediaRecorder;
+        let recordedChunks = [];
+        let poseLandmarker = null;
+        let drawingUtilsPose = null;
+        let runningMode = 'VIDEO';
+        let lastVideoTime = -1;
+        let anklePositions = []; 
+        let originalAnklePositionsForCorrection = []; // Store raw positions for correction/reset
+        let stream = null;
+
+        const HEATMAP_GRID_SIZE = 25;
+        let videoDuration = 0;
+
+        // Trimming State Variables
+        let isTrimmingMode = false;
+        let cropPoints = []; // Array of 4 points: [{x,y}, {x,y}, {x,y}, {x,y}] for TL, TR, BR, BL in poseCanvas pixels
+        let draggingPointIndex = -1; // Index of the cropPoint being dragged (0-3)
+        const HANDLE_RADIUS = 8; // Pixel radius for drag handles on poseCanvas
+        let homographyMatrix = null; // Stores the calculated perspective transform matrix
+
+        // Target rectangle for perspective correction (normalized 0-1 coordinates for the ideal court)
+        const TARGET_COURT_RECT_NORMALIZED = [
+            { x: 0, y: 0 },    // Top-left
+            { x: 1, y: 0 },    // Top-right
+            { x: 1, y: 1 },    // Bottom-right
+            { x: 0, y: 1 }     // Bottom-left
+        ];
+
+        /**
+         * Initialize PoseLandmarker
+         */
+        async function initPoseLandmarker() {
+            try {
+                const vision = await FilesetResolver.forVisionTasks(
+                    "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.10/wasm"
+                );
+                poseLandmarker = await PoseLandmarker.createFromOptions(vision, {
+                    baseOptions: {
+                        modelAssetPath: "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task",
+                        delegate: "GPU"
+                    },
+                    runningMode: runningMode,
+                    numPoses: 1
+                });
+                console.log("PoseLandmarker initialized");
+                loadingTxt.textContent = "モデル読み込み完了。動画を選択してください。";
+                fileInput.disabled = false;
+            } catch (err) {
+                console.error("Error initializing PoseLandmarker:", err);
+                loadingTxt.textContent = "モデル読み込みに失敗しました。ページをリロードしてください。";
+            }
+        }
+        initPoseLandmarker();
+
+        /**
+         * Handle file input change
+         */
+        fileInput.addEventListener('change', (event) => {
+            const file = event.target.files[0];
+            if (!file) return;
+
+            const fileURL = URL.createObjectURL(file);
+            video.src = fileURL;
+            video.style.display = 'block';
+            poseCanvas.style.display = 'block';
+            
+            video.onloadedmetadata = () => {
+                videoDuration = video.duration;
+                [poseCanvas, trajectoryCanvas, heatmapCanvas].forEach(cvs => {
+                    // Keep aspect ratio of video for canvases
+                    const aspectRatio = video.videoWidth / video.videoHeight;
+                    const canvasWidth = cvs.parentElement.clientWidth; // Fit to parent
+                    cvs.width = canvasWidth;
+                    cvs.height = canvasWidth / aspectRatio;
+
+                    if (cvs.id === "poseCanvas") { // Initialize crop points based on poseCanvas dimensions
+                        resetCropPoints();
+                    }
+                });
+                drawingUtilsPose = new DrawingUtils(ctxPose);
+                startButton.disabled = false;
+                analysisSection.classList.add('hidden');
+                trimmingSection.classList.add('hidden'); // Hide trimming section on new video
+                visualizationControls.classList.add('hidden');
+                anklePositions = [];
+                originalAnklePositionsForCorrection = [];
+                recordedChunks = [];
+                downloadLink.classList.add('hidden');
+                homographyMatrix = null; // Reset homography
+                isTrimmingMode = false; // Reset trimming mode
+                removeTrimmingEventListeners();
+                loadingTxt.textContent = "動画の準備ができました。録画を開始できます。";
+            };
+            video.onerror = () => {
+                console.error("Error loading video file.");
+                loadingTxt.textContent = "エラー: 動画ファイルの読み込みに失敗しました。";
+            }
+        });
+
+        /**
+         * Main drawing loop for pose estimation and trimming UI
+         */
+        async function predictWebcam() { // Renamed from drawFrame for clarity as it does more than draw
+            if (!video || video.readyState < 2) {
+                requestAnimationFrame(predictWebcam);
+                return;
+            }
+            
+            ctxPose.clearRect(0, 0, poseCanvas.width, poseCanvas.height);
+            // Draw video frame onto poseCanvas for trimming background or pose overlay
+            if (!isTrimmingMode) { // Only draw video on poseCanvas if not trimming (video element is primary view then)
+                 ctxPose.drawImage(video, 0, 0, poseCanvas.width, poseCanvas.height);
+            }
+
+
+            if (isTrimmingMode) {
+                // When trimming, draw video on main video element, and overlay on poseCanvas
+                // Ensure poseCanvas is transparent or has the video drawn if it's the main view for trimming
+                ctxPose.drawImage(video, 0, 0, poseCanvas.width, poseCanvas.height); // Draw video as background for trimming handles
+                drawTrimmingOverlay();
+            } else if (poseLandmarker && video.currentTime !== lastVideoTime && !video.paused && !video.ended) {
+                const startTimeMs = performance.now();
+                lastVideoTime = video.currentTime;
+
+                poseLandmarker.detectForVideo(video, startTimeMs, (result) => {
+                    ctxPose.clearRect(0, 0, poseCanvas.width, poseCanvas.height); // Clear before drawing video + pose
+                    ctxPose.drawImage(video, 0, 0, poseCanvas.width, poseCanvas.height);
+                    if (result.landmarks && result.landmarks.length > 0) {
+                        const landmarks = result.landmarks[0];
+                        if (drawingUtilsPose) {
+                            drawingUtilsPose.drawConnectors(landmarks, PoseLandmarker.POSE_CONNECTIONS, { color: '#FF8A65', lineWidth: 2 });
+                            drawingUtilsPose.drawLandmarks(landmarks, { color: '#FFAB91', radius: 3 });
+                        }
+                        if (mediaRecorder && mediaRecorder.state === "recording") {
+                            const leftAnkle = landmarks[27];
+                            const rightAnkle = landmarks[28];
+                            if (leftAnkle && rightAnkle) {
+                                anklePositions.push({
+                                    time: video.currentTime,
+                                    leftAnkle: { x: leftAnkle.x, y: leftAnkle.y, visibility: leftAnkle.visibility },
+                                    rightAnkle: { x: rightAnkle.x, y: rightAnkle.y, visibility: rightAnkle.visibility }
+                                });
+                            }
+                        }
+                    }
+                });
+            }
+            requestAnimationFrame(predictWebcam);
+        }
+          
+        video.addEventListener('play', () => {
+            lastVideoTime = -1;
+            requestAnimationFrame(predictWebcam);
+        });
+          
+        video.addEventListener('ended', () => {
+            if (mediaRecorder && mediaRecorder.state === 'recording') {
+                stopRecording();
+            }
+        });
+
+        /**
+         * Start Recording
+         */
+        startButton.addEventListener('click', () => {
+            if (isTrimmingMode) {
+                alert("トリミング調整モード中は録画を開始できません。調整を完了またはリセットしてください。");
+                return;
+            }
+            // Try to get stream from video element's current display (could be poseCanvas if that's where video is rendered)
+            // For simplicity, let's assume we always want to record what's shown on the poseCanvas if it includes pose.
+            // Or, record the raw video and apply pose detection + correction later.
+            // Current setup records poseCanvas.
+            if (poseCanvas.captureStream) {
+                stream = poseCanvas.captureStream(30);
+            } else if (video.captureStream) { 
+                 stream = video.captureStream(30);
+            } else if (video.mozCaptureStream) { 
+                stream = video.mozCaptureStream(30);
+            } else {
+                console.error("captureStream not supported.");
+                loadingTxt.textContent = "エラー: お使いのブラウザは録画機能に対応していません。";
+                return;
+            }
+
+            if (!stream) {
+                 console.error("ストリームの取得に失敗しました。");
+                 loadingTxt.textContent = "エラー: 録画ストリームの取得に失敗しました。";
+                 return;
+            }
+
+            video.play(); 
+
+            anklePositions = []; 
+            originalAnklePositionsForCorrection = [];
+            recordedChunks = [];
+            homographyMatrix = null; // Reset any previous correction
+
+            try {
+                mediaRecorder = new MediaRecorder(stream, { mimeType: 'video/webm; codecs=vp9' });
+            } catch (e) {
+                console.error("Error creating MediaRecorder (vp9):", e);
+                try {
+                    mediaRecorder = new MediaRecorder(stream, { mimeType: 'video/webm' });
+                } catch (e2) {
+                    console.error("Error creating MediaRecorder (default webm):", e2);
+                    loadingTxt.textContent = "エラー: MediaRecorderの作成に失敗しました。録画を開始できません。";
+                    return;
+                }
+            }
+
+            mediaRecorder.ondataavailable = (event) => {
+                if (event.data && event.data.size > 0) {
+                    recordedChunks.push(event.data);
+                }
+            };
+
+            mediaRecorder.onstop = () => {
+                const blob = new Blob(recordedChunks, { type: 'video/webm' });
+                const url = URL.createObjectURL(blob);
+                downloadLink.href = url;
+                downloadLink.classList.remove('hidden');
+                
+                // Store raw ankle positions for potential correction
+                originalAnklePositionsForCorrection = JSON.parse(JSON.stringify(anklePositions)); // Deep copy
+
+                analysisSection.classList.remove('hidden');
+                analyzeButton.disabled = false;
+                trimmingSection.classList.remove('hidden'); // Show trimming section
+                startTrimmingButton.disabled = false;
+                resetTrimmingButton.disabled = false;
+                applyCorrectionButton.disabled = true; // Enabled when trimming starts
+
+                visualizationControls.classList.add('hidden'); 
+
+                if (anklePositions.length > 0) {
+                    const maxTime = anklePositions[anklePositions.length - 1].time;
+                    timeSlider.max = maxTime.toFixed(1);
+                    timeSlider.value = maxTime.toFixed(1);
+                    sliderMaxTime.textContent = `${maxTime.toFixed(1)}s`;
+                    sliderCurrentTime.textContent = `${maxTime.toFixed(1)}s`;
+                } else {
+                     timeSlider.max = videoDuration.toFixed(1);
+                     timeSlider.value = videoDuration.toFixed(1);
+                     sliderMaxTime.textContent = `${videoDuration.toFixed(1)}s`;
+                     sliderCurrentTime.textContent = `${videoDuration.toFixed(1)}s`;
+                }
+                sliderMinTime.textContent = "0.0s";
+                loadingTxt.textContent = "録画が完了しました。移動分析またはコート範囲調整を開始できます。";
+            };
+              
+            mediaRecorder.onerror = (event) => {
+                console.error("MediaRecorder error:", event.error);
+                loadingTxt.textContent = `エラー: 録画中にエラーが発生しました: ${event.error.name}`;
+                stopRecording();
+            };
+
+            mediaRecorder.start();
+            console.log('Recording started');
+            loadingTxt.textContent = "録画中です...";
+            startButton.disabled = true;
+            stopButton.disabled = false;
+            downloadLink.classList.add('hidden');
+            analyzeButton.disabled = true; 
+            trimmingSection.classList.add('hidden'); // Hide trimming during recording
+        });
+
+        /**
+         * Stop Recording
+         */
+        function stopRecording() {
+            if (mediaRecorder && mediaRecorder.state === 'recording') {
+                mediaRecorder.stop();
+                console.log('Recording stopped');
+            }
+            if (stream) {
+                stream.getTracks().forEach(track => track.stop());
+                stream = null; 
+            }
+            startButton.disabled = false;
+            stopButton.disabled = true;
+        }
+        stopButton.addEventListener('click', stopRecording);
+
+        /**
+         * Analyze Button Click
+         */
+        analyzeButton.addEventListener('click', () => {
+            if (originalAnklePositionsForCorrection.length === 0 && anklePositions.length === 0) {
+                console.warn("分析する足首の座標データがありません。");
+                loadingTxt.textContent = "情報: 分析データがありません。先に動画を録画してください。";
+                return;
+            }
+            visualizationControls.classList.remove('hidden');
+            // drawAnalysis will use originalAnklePositionsForCorrection and apply homography if available
+            drawAnalysis(parseFloat(timeSlider.value)); 
+            loadingTxt.textContent = "移動分析結果を表示しています。";
+        });
+
+        /**
+         * Time Slider Input Change
+         */
+        timeSlider.addEventListener('input', () => {
+            const currentTime = parseFloat(timeSlider.value);
+            sliderCurrentTime.textContent = `${currentTime.toFixed(1)}s`;
+            if (!visualizationControls.classList.contains('hidden')) { 
+                 drawAnalysis(currentTime);
+            }
+        });
+          
+        /**
+         * Draw Analysis (Trajectory and Heatmap)
+         * Uses originalAnklePositionsForCorrection and applies homography if matrix exists
+         */
+        function drawAnalysis(currentTime) {
+            ctxTrajectory.clearRect(0, 0, trajectoryCanvas.width, trajectoryCanvas.height);
+            ctxHeatmap.clearRect(0, 0, heatmapCanvas.width, heatmapCanvas.height);
+
+            // Draw court outline (simple rectangle) on trajectory and heatmap canvases
+            ctxTrajectory.strokeStyle = '#888'; // Light gray for court outline
+            ctxTrajectory.lineWidth = 2;
+            ctxTrajectory.strokeRect(0, 0, trajectoryCanvas.width, trajectoryCanvas.height);
+            // You might want a different or no outline for heatmap based on preference
+
+            let positionsToAnalyze;
+            const basePositions = originalAnklePositionsForCorrection.length > 0 ? originalAnklePositionsForCorrection : anklePositions;
+
+            if (homographyMatrix && cropPoints.length === 4) {
+                positionsToAnalyze = correctAnklePositions([...basePositions], homographyMatrix, poseCanvas.width, poseCanvas.height);
+            } else {
+                positionsToAnalyze = [...basePositions]; // Use a copy of the original (or raw after recording)
+            }
+            
+            const filteredPositions = positionsToAnalyze.filter(p => p.time <= currentTime);
+            
+            if (filteredPositions.length === 0) {
+                const noDataMsg = "この時間範囲に表示できるデータがありません。";
+                [ctxTrajectory, ctxHeatmap].forEach(ctx => {
+                    ctx.font = "16px Arial"; // Adjusted font size for better fit
+                    ctx.fillStyle = "gray";
+                    ctx.textAlign = "center";
+                    const canvas = ctx.canvas;
+                    // Wrap text if too long
+                    const words = noDataMsg.split('');
+                    let line = '';
+                    let y = canvas.height / 2 - 10;
+                    for(let n = 0; n < words.length; n++) {
+                        let testLine = line + words[n];
+                        let metrics = ctx.measureText(testLine);
+                        let testWidth = metrics.width;
+                        if (testWidth > canvas.width * 0.9 && n > 0) {
+                            ctx.fillText(line, canvas.width / 2, y);
+                            line = words[n];
+                            y += 20; // Line height
+                        } else {
+                            line = testLine;
+                        }
+                    }
+                    ctx.fillText(line, canvas.width/2, y);
+                });
+                loadingTxt.textContent = "情報: 選択した時間範囲に座標データがありません。";
+                return;
+            } else {
+                 loadingTxt.textContent = "移動分析結果を表示中...";
+            }
+              
+            drawTrajectory(filteredPositions, trajectoryCanvas, ctxTrajectory);
+            drawHeatmap(filteredPositions, heatmapCanvas, ctxHeatmap);
+        }
+
+        /**
+         * Draw Trajectory on a given canvas
+         */
+        function drawTrajectory(positions, canvas, ctx) {
+            ctx.lineWidth = 2;
+            const drawSingleTrajectory = (ankleKey, color) => {
+                ctx.strokeStyle = color;
+                ctx.beginPath();
+                let firstPoint = true;
+                for (const pos of positions) {
+                    const ankle = pos[ankleKey];
+                    if (ankle && typeof ankle.x === 'number' && typeof ankle.y === 'number') { // Check if x,y are valid numbers
+                        // Coordinates are expected to be normalized (0-1) for the target court
+                        const x = ankle.x * canvas.width;
+                        const y = ankle.y * canvas.height;
+                        if (firstPoint) {
+                            ctx.moveTo(x, y);
+                            firstPoint = false;
+                        } else {
+                            ctx.lineTo(x, y);
+                        }
+                    } else {
+                        firstPoint = true; // Reset if a point is missing or invalid
+                    }
+                }
+                ctx.stroke();
+            };
+            drawSingleTrajectory('leftAnkle', 'rgba(59, 130, 246, 0.8)'); // Blue
+            drawSingleTrajectory('rightAnkle', 'rgba(239, 68, 68, 0.8)'); // Red
+        }
+
+        /**
+         * Draw Heatmap on a given canvas
+         */
+        function drawHeatmap(positions, canvas, ctx) {
+            const gridW = canvas.width / HEATMAP_GRID_SIZE;
+            const gridH = canvas.height / HEATMAP_GRID_SIZE;
+            const heatmapData = Array(HEATMAP_GRID_SIZE).fill(null).map(() => Array(HEATMAP_GRID_SIZE).fill(0));
+            let maxHits = 0;
+
+            const processAnkle = (ankle) => {
+                if (ankle && typeof ankle.x === 'number' && typeof ankle.y === 'number') {
+                    // Coordinates are expected to be normalized (0-1) for the target court
+                    const gridX = Math.min(HEATMAP_GRID_SIZE - 1, Math.max(0, Math.floor(ankle.x * HEATMAP_GRID_SIZE)));
+                    const gridY = Math.min(HEATMAP_GRID_SIZE - 1, Math.max(0, Math.floor(ankle.y * HEATMAP_GRID_SIZE)));
+                    heatmapData[gridY][gridX]++;
+                    if (heatmapData[gridY][gridX] > maxHits) maxHits = heatmapData[gridY][gridX];
+                }
+            };
+
+            for (const pos of positions) {
+                processAnkle(pos.leftAnkle);
+                processAnkle(pos.rightAnkle);
+            }
+
+            if (maxHits === 0) return; 
+
+            for (let y = 0; y < HEATMAP_GRID_SIZE; y++) {
+                for (let x = 0; x < HEATMAP_GRID_SIZE; x++) {
+                    if (heatmapData[y][x] > 0) {
+                        const intensity = heatmapData[y][x] / maxHits;
+                        const r = Math.floor(255 * Math.min(1, intensity * 1.5)); 
+                        const g = Math.floor(255 * Math.max(0, (1 - intensity * 1.5))); 
+                        const b = 0; 
+                        ctx.fillStyle = `rgba(${r}, ${g}, ${b}, ${Math.max(0.1, intensity * 0.8)})`; 
+                        ctx.fillRect(x * gridW, y * gridH, gridW, gridH);
+                    }
+                }
+            }
+        }
+
+        // --- Trimming and Correction Logic ---
+
+        function resetCropPoints() {
+            // Initialize cropPoints to the corners of the poseCanvas
+            // These are in PIXEL coordinates of the poseCanvas
+            cropPoints = [
+                { x: 0, y: 0 },                                      // Top-left
+                { x: poseCanvas.width, y: 0 },                       // Top-right
+                { x: poseCanvas.width, y: poseCanvas.height },      // Bottom-right
+                { x: 0, y: poseCanvas.height }                       // Bottom-left
+            ];
+        }
+        
+        startTrimmingButton.addEventListener('click', () => {
+            isTrimmingMode = true;
+            video.pause(); // Pause video to make selection easier
+            trimmingInstructions.textContent = "コートの四隅をドラッグして調整後、「座標を補正」を押します。";
+            startTrimmingButton.disabled = true;
+            applyCorrectionButton.disabled = false;
+            resetTrimmingButton.disabled = false;
+            analyzeButton.disabled = true; // Disable analysis button during trimming
+            fileInput.disabled = true; // Disable file input during trimming
+            startButton.disabled = true; // Disable recording start
+
+            if (cropPoints.length !== 4) { // Initialize if not already set (e.g. first time)
+                resetCropPoints();
+            }
+            addTrimmingEventListeners();
+            requestAnimationFrame(predictWebcam); // Ensure trimming UI is drawn
+        });
+
+        applyCorrectionButton.addEventListener('click', () => {
+            if (cropPoints.length !== 4) {
+                trimmingInstructions.textContent = "エラー: 4つの角が定義されていません。";
+                return;
+            }
+            isTrimmingMode = false;
+            removeTrimmingEventListeners();
+            
+            // Compute homography matrix: maps from cropPoints (pixels on poseCanvas) to TARGET_COURT_RECT_NORMALIZED (0-1)
+            homographyMatrix = computeHomographyMatrix(cropPoints, TARGET_COURT_RECT_NORMALIZED);
+            
+            trimmingInstructions.textContent = "座標補正を適用しました。分析を更新してください。";
+            startTrimmingButton.disabled = false;
+            applyCorrectionButton.disabled = true;
+            // resetTrimmingButton remains enabled
+            analyzeButton.disabled = false; // Re-enable analysis
+            fileInput.disabled = false;
+            // startButton remains disabled until reset or new video
+
+            // Redraw analysis with new correction
+            if (!visualizationControls.classList.contains('hidden')) {
+                 drawAnalysis(parseFloat(timeSlider.value));
+            }
+            requestAnimationFrame(predictWebcam); // Redraw canvas without trimming UI
+        });
+
+        resetTrimmingButton.addEventListener('click', () => {
+            isTrimmingMode = false;
+            removeTrimmingEventListeners();
+            homographyMatrix = null; // Clear correction
+            resetCropPoints(); // Reset visual points to default
+            
+            trimmingInstructions.textContent = "トリミング調整をリセットしました。";
+            startTrimmingButton.disabled = false;
+            applyCorrectionButton.disabled = true;
+            analyzeButton.disabled = false;
+            fileInput.disabled = false;
+            // startButton re-enabled if a video is loaded
+
+            // Redraw analysis with original data
+            if (!visualizationControls.classList.contains('hidden')) {
+                 drawAnalysis(parseFloat(timeSlider.value));
+            }
+            requestAnimationFrame(predictWebcam); // Redraw canvas without trimming UI
+        });
+
+        function addTrimmingEventListeners() {
+            poseCanvas.addEventListener('mousedown', handleMouseDownTrimming);
+            poseCanvas.addEventListener('mousemove', handleMouseMoveTrimming);
+            poseCanvas.addEventListener('mouseup', handleMouseUpTrimming);
+            poseCanvas.addEventListener('mouseleave', handleMouseUpTrimming); // Stop dragging if mouse leaves
+        }
+
+        function removeTrimmingEventListeners() {
+            poseCanvas.removeEventListener('mousedown', handleMouseDownTrimming);
+            poseCanvas.removeEventListener('mousemove', handleMouseMoveTrimming);
+            poseCanvas.removeEventListener('mouseup', handleMouseUpTrimming);
+            poseCanvas.removeEventListener('mouseleave', handleMouseUpTrimming);
+        }
+        
+        function drawTrimmingOverlay() {
+            // ctxPose is used for drawing the trimming UI
+            if (cropPoints.length !== 4) return;
+
+            // Draw semi-transparent overlay to dim the area outside selection (optional but good UX)
+            ctxPose.fillStyle = "rgba(0, 0, 0, 0.3)";
+            ctxPose.fillRect(0, 0, poseCanvas.width, poseCanvas.height);
+
+            ctxPose.save();
+            ctxPose.beginPath();
+            ctxPose.moveTo(cropPoints[0].x, cropPoints[0].y);
+            for (let i = 1; i < 4; i++) {
+                ctxPose.lineTo(cropPoints[i].x, cropPoints[i].y);
+            }
+            ctxPose.closePath();
+            
+            // This makes the selected area clear
+            ctxPose.globalCompositeOperation = 'destination-out';
+            ctxPose.fillStyle = "black"; // Color doesn't matter with destination-out
+            ctxPose.fill();
+            ctxPose.restore(); // Restore composite operation and fill style
+
+            // Draw border for the selected quad
+            ctxPose.strokeStyle = 'rgba(255, 0, 0, 0.9)'; // Bright red for visibility
+            ctxPose.lineWidth = 2;
+            ctxPose.beginPath();
+            ctxPose.moveTo(cropPoints[0].x, cropPoints[0].y);
+            for (let i = 1; i < 4; i++) {
+                ctxPose.lineTo(cropPoints[i].x, cropPoints[i].y);
+            }
+            ctxPose.closePath();
+            ctxPose.stroke();
+
+            // Draw draggable handles
+            ctxPose.fillStyle = 'rgba(255, 0, 0, 0.9)';
+            for (let i = 0; i < 4; i++) {
+                ctxPose.beginPath();
+                ctxPose.arc(cropPoints[i].x, cropPoints[i].y, HANDLE_RADIUS, 0, 2 * Math.PI);
+                ctxPose.fill();
+            }
+        }
+
+        function getMousePos(canvas, evt) {
+            const rect = canvas.getBoundingClientRect();
+            return {
+                x: evt.clientX - rect.left,
+                y: evt.clientY - rect.top
+            };
+        }
+
+        function handleMouseDownTrimming(event) {
+            if (!isTrimmingMode) return;
+            const mousePos = getMousePos(poseCanvas, event);
+            for (let i = 0; i < cropPoints.length; i++) {
+                const dx = mousePos.x - cropPoints[i].x;
+                const dy = mousePos.y - cropPoints[i].y;
+                if (dx * dx + dy * dy < HANDLE_RADIUS * HANDLE_RADIUS) {
+                    draggingPointIndex = i;
+                    poseCanvas.classList.add('trimming-handle');
+                    return;
+                }
+            }
+        }
+
+        function handleMouseMoveTrimming(event) {
+            if (!isTrimmingMode || draggingPointIndex === -1) return;
+            const mousePos = getMousePos(poseCanvas, event);
+            // Clamp points to be within canvas boundaries
+            cropPoints[draggingPointIndex].x = Math.max(0, Math.min(poseCanvas.width, mousePos.x));
+            cropPoints[draggingPointIndex].y = Math.max(0, Math.min(poseCanvas.height, mousePos.y));
+            // No need to call predictWebcam directly, it's on RAF loop.
+            // RAF loop in predictWebcam will call drawTrimmingOverlay if isTrimmingMode is true.
+        }
+
+        function handleMouseUpTrimming() {
+            if (!isTrimmingMode) return;
+            draggingPointIndex = -1;
+            poseCanvas.classList.remove('trimming-handle');
+        }
+
+        /**
+         * Computes the homography matrix.
+         * @param {Array<{x:number, y:number}>} srcPts - Array of 4 source points (pixels on poseCanvas).
+         * @param {Array<{x:number, y:number}>} dstPtsNorm - Array of 4 destination points (normalized 0-1 for target court).
+         * @returns {Array<number>|null} 3x3 homography matrix (row-major order) or null if calculation fails.
+         *
+         * IMPORTANT NOTE: This is a STUB/PLACEHOLDER. True homography calculation is complex
+         * and involves solving a system of 8 linear equations from the 4 point correspondences.
+         * This typically requires matrix library functions (e.g., for Gaussian elimination or SVD).
+         * For a real application, consider using a library like OpenCV.js (cv.findHomography)
+         * or implementing the matrix math robustly.
+         */
+        function computeHomographyMatrix(srcPts, dstPtsNorm) {
+            if (srcPts.length !== 4 || dstPtsNorm.length !== 4) {
+                console.error("computeHomographyMatrix: Requires 4 source and 4 destination points.");
+                return null;
+            }
+            console.warn("computeHomographyMatrix is a placeholder. It does NOT compute a true perspective transform.");
+            console.log("Source Points (Pixels):", srcPts);
+            console.log("Destination Points (Normalized):", dstPtsNorm);
+            // This placeholder returns an identity matrix, meaning no actual perspective correction will occur.
+            // A real implementation would involve:
+            // 1. Setting up an 8x8 matrix A and an 8x1 vector b from the point correspondences.
+            //    For each point i:
+            //    x_src_i, y_src_i -> x_dst_norm_i, y_dst_norm_i
+            //    A_row1 = [x_src_i, y_src_i, 1, 0,       0,       0, -x_src_i*x_dst_norm_i, -y_src_i*x_dst_norm_i]
+            //    b_row1 = [x_dst_norm_i]
+            //    A_row2 = [0,       0,       0, x_src_i, y_src_i, 1, -x_src_i*y_dst_norm_i, -y_src_i*y_dst_norm_i]
+            //    b_row2 = [y_dst_norm_i]
+            // 2. Solving Ah = b for h (where h is [h11,h12,h13,h21,h22,h23,h31,h32]).
+            // 3. The matrix is then [h11,h12,h13, h21,h22,h23, h31,h32,1] (h33 is normalized to 1).
+            return [
+                1, 0, 0, // H11, H12, H13
+                0, 1, 0, // H21, H22, H23
+                0, 0, 1  // H31, H32, H33 (H33 normalized to 1)
+            ];
+        }
+
+        /**
+         * Applies homography transformation to a point.
+         * @param {{x:number, y:number}} pointNormSrc - Original point from MediaPipe (normalized 0-1, relative to poseCanvas).
+         * @param {Array<number>} H - Homography matrix (9 elements, row-major).
+         * @param {number} srcCanvasWidth - Width of the source canvas (poseCanvas).
+         * @param {number} srcCanvasHeight - Height of the source canvas (poseCanvas).
+         * @returns {{x:number, y:number}} Transformed point (normalized 0-1, relative to target court).
+         */
+        function applyHomography(pointNormSrc, H, srcCanvasWidth, srcCanvasHeight) {
+            if (!H || H.length !== 9) {
+                // If no valid matrix, return the original normalized point (no transformation)
+                return pointNormSrc;
+            }
+
+            // Convert normalized source point to pixel coordinates on source canvas
+            const srcXpx = pointNormSrc.x * srcCanvasWidth;
+            const srcYpx = pointNormSrc.y * srcCanvasHeight;
+
+            const denominator = H[6] * srcXpx + H[7] * srcYpx + H[8]; // H[8] is h33, usually 1
+
+            if (Math.abs(denominator) < 1e-7) { // Avoid division by zero or very small number
+                console.warn("Denominator is close to zero in homography. Returning original normalized point.");
+                return pointNormSrc; // Or handle as an invalid point
+            }
+
+            // Apply transformation to get destination coordinates (these are normalized for the target court)
+            const dstNormX = (H[0] * srcXpx + H[1] * srcYpx + H[2]) / denominator;
+            const dstNormY = (H[3] * srcXpx + H[4] * srcYpx + H[5]) / denominator;
+            
+            return { x: dstNormX, y: dstNormY };
+        }
+        
+        /**
+         * Corrects all ankle positions using the homography matrix.
+         * @param {Array<Object>} positions - Array of ankle position data.
+         * @param {Array<number>} H - Homography matrix.
+         * @param {number} sourceWidth - Width of the source canvas (poseCanvas).
+         * @param {number} sourceHeight - Height of the source canvas (poseCanvas).
+         * @returns {Array<Object>} Array of corrected ankle positions.
+         */
+        function correctAnklePositions(positions, H, sourceWidth, sourceHeight) {
+            if (!H) return positions; // Return original if no homography matrix
+            
+            return positions.map(p => {
+                const correctedP = { ...p }; // Shallow copy time and other potential fields
+                if (p.leftAnkle) {
+                    correctedP.leftAnkle = { 
+                        ...p.leftAnkle, 
+                        ...applyHomography(p.leftAnkle, H, sourceWidth, sourceHeight) 
+                    };
+                }
+                if (p.rightAnkle) {
+                    correctedP.rightAnkle = { 
+                        ...p.rightAnkle, 
+                        ...applyHomography(p.rightAnkle, H, sourceWidth, sourceHeight) 
+                    };
+                }
+                return correctedP;
+            });
+        }
+
+    </script>
+</body>
+</html>
