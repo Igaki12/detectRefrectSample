@@ -1,0 +1,307 @@
+<!DOCTYPE html>
+<html lang="ja">
+
+<head>
+    <meta charset="utf-8" />
+    <title>Badminton Helper – Pose & Heatmap Demo</title>
+    <style>
+        /* ===== 共通リセット ===== */
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0
+        }
+
+        /* ===== 基本レイアウト ===== */
+        body {
+            font-family: 'Helvetica Neue', Arial, sans-serif;
+            background: linear-gradient(135deg, #fcebe2, #fcc8a3);
+            color: #000;
+            text-align: center;
+            padding: 20px;
+            min-height: 100vh;
+        }
+
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background: rgba(255, 255, 255, .3);
+            border-radius: 10px;
+            position: relative;
+        }
+
+        h1 {
+            font-size: 2rem;
+            margin-bottom: 20px;
+            text-shadow: 1px 1px 2px rgba(0, 0, 0, .3)
+        }
+
+        h2 {
+            font-size: 1.3rem;
+            margin-bottom: 8px;
+            text-shadow: 1px 1px 2px rgba(0, 0, 0, .3)
+        }
+
+        p {
+            margin-bottom: 12px
+        }
+
+        /* ===== 入力 & ボタン ===== */
+        input[type="file"],
+        button,
+        a#downloadLink {
+            font-size: 1rem;
+            font-weight: bold;
+            padding: 10px 20px;
+            margin: 10px;
+            border: 2px solid #8B4513;
+            border-radius: 8px;
+            background: #D2691E;
+            color: #fff;
+            cursor: pointer;
+            transition: .3s;
+        }
+
+        input[type="file"]:hover,
+        button:hover:not(:disabled) {
+            background: #B22222;
+            transform: scale(1.05)
+        }
+
+        input[type="file"]:disabled,
+        button:disabled {
+            opacity: .6;
+            cursor: not-allowed
+        }
+
+        a#downloadLink {
+            display: none;
+            background: linear-gradient(45deg, crimson, indigo);
+            animation: pulse 2s infinite;
+            text-decoration: none
+        }
+
+        @keyframes pulse {
+
+            0%,
+            100% {
+                transform: scale(1);
+                box-shadow: 0 0 5px rgba(255, 255, 255, .5)
+            }
+
+            50% {
+                transform: scale(1.1);
+                box-shadow: 0 0 15px rgba(255, 255, 255, .8)
+            }
+        }
+
+        /* ===== 動画 & キャンバス ===== */
+        #videoCanvas,
+        #heatmapCanvas,
+        video {
+            max-width: 100%;
+            border: 2px solid #8B4513;
+            border-radius: 10px;
+            margin: 10px auto;
+        }
+
+        #canvasWrap {
+            position: relative;
+            display: inline-block
+        }
+
+        #heatmapCanvas {
+            position: absolute;
+            left: 0;
+            top: 0;
+            pointer-events: none;
+            display: none
+        }
+
+        /* ===== レスポンシブ ===== */
+        @media(max-width:600px) {
+            h1 {
+                font-size: 1.5rem
+            }
+
+            h2 {
+                font-size: 1.1rem
+            }
+
+            input[type="file"],
+            button,
+            a#downloadLink {
+                font-size: .9rem;
+                padding: 8px 16px
+            }
+        }
+    </style>
+</head>
+
+<body>
+    <div class="container">
+        <h1>Badminton Helper Pose & Heatmap Demo</h1>
+        <h2>動画アップロード → 録画 & 姿勢推定 → ヒートマップ描画</h2>
+        <p id="loadingTxt">初回のみモジュール読込に時間がかかります。</p>
+
+        <input type="file" id="fileInput" accept="video/*" disabled>
+
+
+        <!-- Video (非表示で音声付きプレビュー用) -->
+        <video id="video" controls style="display:none"></video>
+        <div id="canvasWrap">
+            <!-- 推定結果用 Canvas -->
+            <canvas id="videoCanvas"></canvas>
+            <!-- 足首ヒートマップ用 Canvas -->
+            <canvas id="heatmapCanvas"></canvas>
+        </div>
+
+        <br>
+        <button id="startButton" disabled>録画開始</button>
+        <button id="stopButton" disabled>録画停止</button>
+        <button id="heatmapButton" style="display:none">ヒートマップ描画</button>
+        <br>
+        <a id="downloadLink" href="#" download="heat-discovery.webm">ダウンロード</a>
+    </div>
+
+    <!-- ===== JavaScript Modules ===== -->
+    <script type="module">
+        import { PoseLandmarker, FilesetResolver, DrawingUtils } from "https://cdn.skypack.dev/@mediapipe/tasks-vision@0.10.0";
+
+        /* ==== DOM ==== */
+        const fileInput = document.getElementById('fileInput');
+        const video = document.getElementById('video');
+        const vCanvas = document.getElementById('videoCanvas');
+        const hCanvas = document.getElementById('heatmapCanvas');
+        const ctx = vCanvas.getContext('2d');
+        const hctx = hCanvas.getContext('2d');
+        const startBtn = document.getElementById('startButton');
+        const stopBtn = document.getElementById('stopButton');
+        const heatmapBtn = document.getElementById('heatmapButton');
+        const dlLink = document.getElementById('downloadLink');
+        const loadingTxt = document.getElementById('loadingTxt');
+
+        /* ==== PoseLandmarker ==== */
+        let poseLandmarker = null, drawingUtils = null, runningMode = 'VIDEO', lastVideoTime = -1;
+
+        /* ==== MediaRecorder ==== */
+        let mediaRecorder, stream, recordedChunks = [];
+
+        /* ==== 足首座標履歴 ==== */
+        const anklePoints = []; // {x,y} を frame ごと push
+        const allPoints = []; // 全身のランドマークを保存する配列 { time, x, y, index }
+
+        /* ---------- 初期化 ---------- */
+        (async () => {
+            const vision = await FilesetResolver.forVisionTasks("https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.0/wasm");
+            poseLandmarker = await PoseLandmarker.createFromOptions(vision, {
+                baseOptions: {
+                    modelAssetPath: "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task",
+                    delegate: "GPU"
+                },
+                runningMode,
+                numPoses: 1
+            });
+            loadingTxt.style.display = 'none';
+            fileInput.disabled = false;
+            console.log('PoseLandmarker ready');
+        })();
+
+        /* ---------- ファイル選択 ---------- */
+        fileInput.addEventListener('change', () => {
+            const file = fileInput.files[0];
+            if (!file) return;
+            const url = URL.createObjectURL(file);
+            video.src = url;
+            video.style.display = 'block';
+            video.addEventListener('loadedmetadata', () => {
+                [vCanvas.width, vCanvas.height] = [video.videoWidth, video.videoHeight];
+                [hCanvas.width, hCanvas.height] = [video.videoWidth, video.videoHeight];
+                drawingUtils = new DrawingUtils(ctx);
+            }, { once: true });
+            startBtn.disabled = false;
+        });
+
+        /* ---------- 描画ループ ---------- */
+        video.addEventListener('play', () => requestAnimationFrame(drawFrame));
+        async function drawFrame() {
+            if (video.paused || video.ended) return;
+            ctx.drawImage(video, 0, 0, vCanvas.width, vCanvas.height);
+
+            if (poseLandmarker && lastVideoTime !== video.currentTime) {
+                lastVideoTime = video.currentTime;
+                poseLandmarker.detectForVideo(video, performance.now(), res => {
+                    const landmarks = res.landmarks[0];
+                    if (!landmarks) return;
+                    // ランドマーク描画
+                    drawingUtils.drawLandmarks(landmarks);
+                    drawingUtils.drawConnectors(landmarks, PoseLandmarker.POSE_CONNECTIONS);
+
+                    // 全身ランドマークを保存
+
+
+                    // 足首 index 27(left) & 28(right)
+                    [27, 28].forEach(i => {
+                        const lm = landmarks[i];
+                        anklePoints.push({ x: lm.x * vCanvas.width, y: lm.y * vCanvas.height });
+                    });
+                });
+            }
+            requestAnimationFrame(drawFrame);
+        }
+
+        /* ---------- 録画開始 ---------- */
+        startBtn.addEventListener('click', () => {
+            if (video.paused) video.play();
+            stream = vCanvas.captureStream(30);
+            mediaRecorder = new MediaRecorder(stream, { mimeType: 'video/webm;codecs=vp9' });
+            recordedChunks = [];
+            mediaRecorder.ondataavailable = e => e.data.size && recordedChunks.push(e.data);
+            mediaRecorder.onstop = () => {
+                const blob = new Blob(recordedChunks, { type: 'video/webm' });
+                dlLink.href = URL.createObjectURL(blob);
+                dlLink.download = fileInput.files[0].name.replace(/\.[^/.]+$/, '') + '_pose.webm';
+                dlLink.style.display = 'inline-block';
+                heatmapBtn.style.display = 'inline-block'; // ← ヒートマップボタン出現
+            };
+            mediaRecorder.start();
+            startBtn.disabled = true; stopBtn.disabled = false; dlLink.style.display = 'none';
+        });
+
+        /* ---------- 録画停止 ---------- */
+        stopBtn.addEventListener('click', stopRecording);
+        function stopRecording() {
+            if (mediaRecorder && mediaRecorder.state === 'recording') {
+                mediaRecorder.stop();
+                startBtn.disabled = false; stopBtn.disabled = true;
+            }
+        }
+
+        /* ---------- ヒートマップ描画 / トグル ---------- */
+        let heatmapVisible = false;
+        heatmapBtn.addEventListener('click', () => {
+            heatmapVisible = !heatmapVisible;
+            heatmapBtn.textContent = heatmapVisible ? 'ヒートマップ非表示' : 'ヒートマップ描画';
+            hCanvas.style.display = heatmapVisible ? 'block' : 'none';
+            if (heatmapVisible) renderHeatmap();
+        });
+
+        /* ヒートマップを描画 */
+        function renderHeatmap() {
+            hctx.clearRect(0, 0, hCanvas.width, hCanvas.height);
+            anklePoints.forEach(pt => {
+                const grd = hctx.createRadialGradient(pt.x, pt.y, 0, pt.x, pt.y, 30);
+                grd.addColorStop(0, 'rgba(255,0,0,0.6)');
+                grd.addColorStop(1, 'rgba(255,0,0,0)');
+                hctx.fillStyle = grd;
+                hctx.beginPath();
+                hctx.arc(pt.x, pt.y, 30, 0, Math.PI * 2);
+                hctx.fill();
+            });
+        }
+
+    </script>
+</body>
+
+</html>

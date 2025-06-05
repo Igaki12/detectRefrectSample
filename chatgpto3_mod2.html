@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8" />
+<title>Badminton Assist – Pose Landmarker & Ankle Heatmap</title>
+<style>
+/* ---------- 共通レイアウト ---------- */
+*{box-sizing:border-box;margin:0;padding:0}
+body{
+  font-family:'Helvetica Neue',Arial,sans-serif;
+  background:linear-gradient(135deg,#fcebe2,#fcc8a3);
+  color:#000;text-align:center;padding:20px;min-height:100vh}
+.container{
+  max-width:800px;margin:0 auto;
+  background:rgba(255,255,255,.3);padding:20px;border-radius:10px}
+/* ---------- 見出し ---------- */
+h1{font-size:2rem;margin-bottom:20px;text-shadow:1px 1px 2px rgba(0,0,0,.3)}
+h2{font-size:1.3rem;margin-bottom:8px;text-shadow:1px 1px 2px rgba(0,0,0,.3)}
+p{margin-bottom:12px}
+/* ---------- 入力ボタン ---------- */
+input[type=file],button,#downloadLink{
+  font-size:1.05rem;font-weight:bold;padding:10px 20px;margin:10px;
+  border:2px solid #8B4513;border-radius:8px;cursor:pointer;
+  background:#D2691E;color:#fff;transition:.3s}
+input[type=file]:hover,button:hover:not(:disabled){background:#B22222;transform:scale(1.05)}
+input[type=file]:disabled,button:disabled{opacity:.6;cursor:not-allowed}
+/* ---------- 動画・キャンバス ---------- */
+video,canvas{max-width:100%;border:2px solid #8B4513;border-radius:10px;margin:10px auto}
+/* ---------- ダウンロードリンク ---------- */
+#downloadLink{
+  display:none;text-decoration:none;background:linear-gradient(45deg,crimson,indigo);
+  animation:pulse 2s infinite}
+@keyframes pulse{
+  0%{transform:scale(1);box-shadow:0 0 5px rgba(255,255,255,.4)}
+  50%{transform:scale(1.1);box-shadow:0 0 15px rgba(255,255,255,.8)}
+  100%{transform:scale(1);box-shadow:0 0 5px rgba(255,255,255,.4)}}
+@media(max-width:600px){
+  h1{font-size:1.6rem}h2{font-size:1.2rem}
+  input[type=file],button,#downloadLink{font-size:1rem;padding:8px 16px}}
+</style>
+</head>
+<body>
+<div class="container">
+  <h1>Badminton補助：姿勢推定＋足首ヒートマップ</h1>
+  <h2>動画をアップロードして解析します</h2>
+  <p id="loadingTxt">初回のみモデル読込に数秒かかります…</p>
+
+  <!-- ファイル選択 -->
+  <input type="file" id="fileInput" accept="video/*" disabled><br>
+
+  <!-- 再生用動画 & 描画用キャンバス -->
+  <video id="video" controls style="display:none"></video>
+  <canvas id="canvas"></canvas><br>
+
+  <!-- 操作用ボタン -->
+  <button id="startButton" disabled>録画＆解析開始</button>
+  <button id="stopButton"  disabled>録画停止</button>
+  <button id="heatmapButton" style="display:none">ヒートマップ描画</button><br>
+
+  <!-- 録画ダウンロード -->
+  <a id="downloadLink" href="#" download="ankle-analysis.webm">ダウンロード</a>
+</div>
+
+<!-- ------------- Mediapipe & アプリスクリプト ------------- -->
+<script type="module">
+import {PoseLandmarker,FilesetResolver,DrawingUtils}
+  from "https://cdn.skypack.dev/@mediapipe/tasks-vision@0.10.0";
+
+/* ---- DOM ---- */
+const fileInput = document.getElementById('fileInput');
+const video     = document.getElementById('video');
+const canvas    = document.getElementById('canvas');
+const ctx       = canvas.getContext('2d');
+const startBtn  = document.getElementById('startButton');
+const stopBtn   = document.getElementById('stopButton');
+const heatBtn   = document.getElementById('heatmapButton');
+const dlLink    = document.getElementById('downloadLink');
+const loading   = document.getElementById('loadingTxt');
+
+/* ---- Mediapipe ---- */
+let poseLandmarker, drawingUtils;
+let lastVideoTime = -1;
+const LEFT_ANKLE = 27, RIGHT_ANKLE = 28;
+
+/* ---- 録画 ---- */
+let mediaRecorder, recordedChunks=[], stream;
+
+/* ---- 足首座標保存 ---- */
+const anklePositions = []; // {x, y}
+
+/* ---------- PoseLandmarker 初期化 ---------- */
+(async()=>{
+  const vision = await FilesetResolver.forVisionTasks(
+    "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.0/wasm");
+  poseLandmarker = await PoseLandmarker.createFromOptions(vision,{
+    baseOptions:{modelAssetPath:
+      "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task",
+      delegate:"GPU"},
+    runningMode:"VIDEO", numPoses:1});
+  drawingUtils = new DrawingUtils(ctx);
+  fileInput.disabled = false;
+  loading.style.display = 'none';
+  console.log("PoseLandmarker ready");
+})();
+
+/* ---------- ファイル選択 ---------- */
+fileInput.addEventListener('change',()=>{
+  const file = fileInput.files[0]; if(!file) return;
+  video.src = URL.createObjectURL(file);
+  video.style.display='block';
+  video.addEventListener('loadedmetadata',()=>{
+    canvas.width = video.videoWidth; canvas.height = video.videoHeight;
+  },{once:true});
+  startBtn.disabled=false;
+});
+
+/* ---------- 毎フレーム処理 ---------- */
+video.addEventListener('play',()=>requestAnimationFrame(drawFrame));
+async function drawFrame(){
+  if(video.paused||video.ended)return;
+  ctx.drawImage(video,0,0,canvas.width,canvas.height);
+
+  if(poseLandmarker && lastVideoTime!==video.currentTime){
+    lastVideoTime = video.currentTime;
+    poseLandmarker.detectForVideo(video,performance.now(),({landmarks})=>{
+      landmarks.forEach(lms=>{
+        drawingUtils.drawLandmarks(lms);
+        drawingUtils.drawConnectors(lms,PoseLandmarker.POSE_CONNECTIONS);
+        /* ---- 足首座標保存（録画中のみ） ---- */
+        if(mediaRecorder && mediaRecorder.state==='recording'){
+          [LEFT_ANKLE,RIGHT_ANKLE].forEach(i=>{
+            const p=lms[i];
+            anklePositions.push({x:p.x*canvas.width, y:p.y*canvas.height});
+          });
+        }
+      });
+    });
+  }
+  requestAnimationFrame(drawFrame);
+}
+
+/* ---------- 録画開始 ---------- */
+startBtn.addEventListener('click',()=>{
+  if(video.paused) video.play();
+  stream = canvas.captureStream(30);
+  mediaRecorder = new MediaRecorder(stream,{mimeType:'video/webm;codecs=vp9'});
+  recordedChunks=[];
+  mediaRecorder.ondataavailable=e=>{if(e.data.size)recordedChunks.push(e.data)};
+  mediaRecorder.onstop=()=>{
+    const blob=new Blob(recordedChunks,{type:'video/webm'});
+    dlLink.href=URL.createObjectURL(blob);
+    dlLink.download=fileInput.files[0].name.replace(/\.[^/.]+$/,'')+'_ankle.webm';
+    dlLink.style.display='inline-block';
+    heatBtn.style.display='inline-block';          // ★ヒートマップ描画ボタン出現
+  };
+  mediaRecorder.start();
+  startBtn.disabled=true; stopBtn.disabled=false; dlLink.style.display='none';
+  console.log("Recording started");
+});
+
+/* ---------- 録画停止 ---------- */
+stopBtn.addEventListener('click',stopRecording);
+video.addEventListener('ended',stopRecording);
+function stopRecording(){
+  if(mediaRecorder && mediaRecorder.state==='recording'){
+    mediaRecorder.stop();
+    startBtn.disabled=false; stopBtn.disabled=true;
+    console.log("Recording stopped");
+  }
+}
+
+/* ---------- ヒートマップ描画 ---------- */
+heatBtn.addEventListener('click',drawHeatmap);
+function drawHeatmap(){
+  ctx.clearRect(0,0,canvas.width,canvas.height);
+  ctx.globalAlpha=0.15;
+  anklePositions.forEach(p=>{
+    const grd=ctx.createRadialGradient(p.x,p.y,0,p.x,p.y,30);
+    grd.addColorStop(0,'rgba(255,0,0,1)');
+    grd.addColorStop(1,'rgba(255,0,0,0)');
+    ctx.fillStyle=grd;
+    ctx.beginPath(); ctx.arc(p.x,p.y,30,0,Math.PI*2); ctx.fill();
+  });
+  ctx.globalAlpha=1;
+  heatBtn.disabled=true;       // 二重描画防止
+}
+</script>
+</body>
+</html>

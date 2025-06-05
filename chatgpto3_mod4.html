@@ -1,0 +1,242 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8" />
+<title>Badminton Pose & Ankle Heatmap Demo</title>
+<style>
+/* ------- 共通リセット ------- */
+*{box-sizing:border-box;margin:0;padding:0}
+
+/* ------- レイアウト ------- */
+body{
+  font-family:'Helvetica Neue',Arial,sans-serif;
+  background:linear-gradient(135deg,#fcebe2,#fcc8a3);
+  padding:20px;text-align:center;min-height:100vh;color:#000
+}
+.container{
+  max-width:900px;margin:0 auto;padding:20px;
+  background:rgba(255,255,255,.35);border-radius:10px
+}
+h1{font-size:1.8rem;margin-bottom:10px}
+h2{font-size:1.2rem;margin-bottom:15px}
+
+/* ------- 入力＆ボタン ------- */
+input[type="file"],button,label{
+  font-size:1rem;font-weight:bold;margin:8px;padding:10px 18px;
+  border-radius:8px;cursor:pointer;border:2px solid #8B4513;
+  background:#D2691E;color:#fff;transition:.3s
+}
+input[type="file"]:hover,button:hover{background:#B22222;transform:scale(1.05)}
+input[type="file"]:disabled,button:disabled{background:#ccc;cursor:not-allowed;opacity:.6}
+
+/* ------- ダウンロードリンク ------- */
+#downloadLink{
+  display:none;text-decoration:none;animation:pulse 2s infinite;
+  background:linear-gradient(45deg,#ff0a33,indigo)
+}
+
+/* ------- ビデオ＆キャンバス ------- */
+#video{display:none;max-width:100%;border:2px solid #8B4513;border-radius:10px}
+#canvasWrap{position:relative;display:inline-block}
+canvas{
+  border:2px solid #8B4513;border-radius:10px;max-width:100%;
+}
+#poseCanvas{position:relative;z-index:1}
+#heatmapCanvas{
+  position:absolute;left:0;top:0;z-index:2;pointer-events:none;
+}
+
+/* ------- スライダー＆トグル ------- */
+#controlsExtra{display:none;margin-top:10px}
+#timeSlider{width:100%;margin-top:10px}
+
+/* ------- アニメ ------- */
+@keyframes pulse{
+  0%,100%{transform:scale(1);box-shadow:0 0 5px rgba(255,255,255,.5)}
+  50%{transform:scale(1.08);box-shadow:0 0 15px rgba(255,255,255,.8)}
+}
+</style>
+</head>
+<body>
+<div class="container">
+  <h1>Detect & Reflect: Pose × Ankle Heatmap</h1>
+  <h2>動画をアップロードしてスタート！</h2>
+  <p id="loadingTxt">初回のみモデルを読み込み中です…</p>
+
+  <input type="file" id="fileInput" accept="video/*" disabled>
+
+  <div id="canvasWrap">
+    <video id="video" controls></video><br>
+    <canvas id="poseCanvas"></canvas>
+    <canvas id="heatmapCanvas"></canvas>
+  </div><br>
+
+  <button id="startBtn" disabled>録画開始</button>
+  <button id="stopBtn"  disabled>録画停止</button><br>
+
+  <a id="downloadLink" href="#" download>ダウンロード</a>
+
+  <!-- 追加コントロール -->
+  <div id="controlsExtra">
+    <label>
+      <input type="checkbox" id="heatToggle"> ヒートマップ描画
+    </label>
+    <input type="range" id="timeSlider" min="0" max="0" step="0.05" value="0">
+  </div>
+</div>
+
+<!-- ---------- メインスクリプト ---------- -->
+<script type="module">
+import {PoseLandmarker,FilesetResolver,DrawingUtils}
+  from "https://cdn.skypack.dev/@mediapipe/tasks-vision@0.10.0";
+
+/* ---------- DOM ---------- */
+const fileInput      = document.getElementById('fileInput');
+const video          = document.getElementById('video');
+const poseCanvas     = document.getElementById('poseCanvas');
+const heatmapCanvas  = document.getElementById('heatmapCanvas');
+const ctxPose        = poseCanvas.getContext('2d');
+const ctxHeat        = heatmapCanvas.getContext('2d');
+const startBtn       = document.getElementById('startBtn');
+const stopBtn        = document.getElementById('stopBtn');
+const downloadLink   = document.getElementById('downloadLink');
+const loadingTxt     = document.getElementById('loadingTxt');
+const controlsExtra  = document.getElementById('controlsExtra');
+const heatToggle     = document.getElementById('heatToggle');
+const timeSlider     = document.getElementById('timeSlider');
+
+/* ---------- 収集データ ---------- */
+let poseLandmarker,drawingUtils;
+let lastVideoTime=-1;
+const ankleHistory=[];  // {time,left:{x,y},right:{x,y}}
+
+let mediaRecorder,recordedChunks=[],stream;
+
+/* ---------- 初期化 ---------- */
+(async()=>{
+  const vision = await FilesetResolver.forVisionTasks(
+    "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.0/wasm");
+  poseLandmarker = await PoseLandmarker.createFromOptions(vision,{
+    baseOptions:{
+      modelAssetPath:"https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task",
+      delegate:"GPU"
+    },
+    runningMode:"VIDEO",
+    numPoses:1
+  });
+  loadingTxt.textContent="モデル読み込み完了！動画を選んでください";
+  fileInput.disabled=false;
+})();
+
+/* ---------- ファイル入力 ---------- */
+fileInput.addEventListener('change',()=>{
+  const file=fileInput.files[0]; if(!file) return;
+  video.src = URL.createObjectURL(file);
+  video.style.display='block';
+  video.addEventListener('loadedmetadata',()=>{
+    poseCanvas.width  = heatmapCanvas.width  = video.videoWidth;
+    poseCanvas.height = heatmapCanvas.height = video.videoHeight;
+    drawingUtils = new DrawingUtils(ctxPose);
+    startBtn.disabled=false;
+  },{once:true});
+});
+
+/* ---------- 録画開始 ---------- */
+startBtn.addEventListener('click',()=>{
+  if(video.paused) video.play();
+  ankleHistory.length=0; lastVideoTime=-1;
+  stream = poseCanvas.captureStream(30);
+  mediaRecorder=new MediaRecorder(stream,{mimeType:'video/webm;codecs=vp9'});
+  recordedChunks=[];
+  mediaRecorder.ondataavailable=e=>e.data.size&&recordedChunks.push(e.data);
+  mediaRecorder.onstop=()=>{             // ダウンロードリンク生成
+    const blob=new Blob(recordedChunks,{type:'video/webm'});
+    const url=URL.createObjectURL(blob);
+    downloadLink.href=url;
+    downloadLink.download=fileInput.files[0].name.replace(/\.[^/.]+$/,"")+"_annotated.webm";
+    downloadLink.style.display='inline-block';
+
+    /* 時間軸 UI セットアップ */
+    timeSlider.max=video.duration.toFixed(2);
+    controlsExtra.style.display='block';
+  };
+  mediaRecorder.start();
+  startBtn.disabled=true;
+  stopBtn.disabled=false;
+});
+
+/* ---------- 録画停止 ---------- */
+stopBtn.addEventListener('click',()=>stopRecording());
+video.addEventListener('ended',()=>stopRecording());
+function stopRecording(){
+  if(mediaRecorder?.state==='recording'){mediaRecorder.stop();}
+  startBtn.disabled=false;
+  stopBtn.disabled=true;
+}
+
+/* ---------- メイン描画ループ ---------- */
+video.addEventListener('play',()=>requestAnimationFrame(drawFrame));
+async function drawFrame(){
+  if(video.paused||video.ended) return;
+
+  /* ---- poseCanvas：動画＋骨格 ---- */
+  ctxPose.drawImage(video,0,0,poseCanvas.width,poseCanvas.height);
+  if(lastVideoTime!==video.currentTime){
+    lastVideoTime=video.currentTime;
+    await poseLandmarker.detectForVideo(video,performance.now(),res=>{
+      if(!res.landmarks?.length) return;
+      const lm=res.landmarks[0];
+      drawingUtils.drawLandmarks(lm);
+      drawingUtils.drawConnectors(lm,PoseLandmarker.POSE_CONNECTIONS);
+
+      // 足首座標（ピクセル）を記録
+      const L=lm[27],R=lm[28]; // 左・右 foot index
+      ankleHistory.push({
+        time:video.currentTime,
+        left :{x:L.x*poseCanvas.width ,y:L.y*poseCanvas.height},
+        right:{x:R.x*poseCanvas.width ,y:R.y*poseCanvas.height}
+      });
+    });
+  }
+
+  /* ---- heatmapCanvas：必要なら更新 ---- */
+  if(heatToggle.checked){ drawHeatmap(timeSlider.valueAsNumber||video.currentTime); }
+
+  requestAnimationFrame(drawFrame);
+}
+
+/* ---------- ヒートマップ描画 ---------- */
+function drawHeatmap(pivotTime){
+  ctxHeat.clearRect(0,0,heatmapCanvas.width,heatmapCanvas.height);
+  const radius=18,alpha=.18;
+  ankleHistory.forEach(pt=>{
+    const before=pt.time<=pivotTime;
+    ctxHeat.fillStyle = before ? `rgba(255,0,0,${alpha})`
+                               : `rgba(0,0,255,${alpha})`;
+    ctxHeat.beginPath();
+    ctxHeat.arc(pt.left.x ,pt.left.y ,radius,0,Math.PI*2);
+    ctxHeat.arc(pt.right.x,pt.right.y,radius,0,Math.PI*2);
+    ctxHeat.fill();
+  });
+}
+
+/* ---------- UI イベント ---------- */
+heatToggle.addEventListener('change',()=>{
+  if(heatToggle.checked){
+    drawHeatmap(timeSlider.valueAsNumber||0);
+  }else{
+    ctxHeat.clearRect(0,0,heatmapCanvas.width,heatmapCanvas.height);
+  }
+});
+
+/* スライダーで seek */
+timeSlider.addEventListener('input',()=>{
+  video.currentTime=timeSlider.valueAsNumber;
+  drawHeatmap(timeSlider.valueAsNumber);
+});
+video.addEventListener('seeked',()=>{   // poseCanvas を現在時刻で更新
+  ctxPose.drawImage(video,0,0,poseCanvas.width,poseCanvas.height);
+});
+</script>
+</body>
+</html>
