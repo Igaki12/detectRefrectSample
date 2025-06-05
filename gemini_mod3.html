@@ -426,19 +426,29 @@
         function drawAnalysis(currentTime) {
             ctxTrajectory.clearRect(0, 0, trajectoryCanvas.width, trajectoryCanvas.height);
             ctxHeatmap.clearRect(0, 0, heatmapCanvas.width, heatmapCanvas.height);
-
-            const filteredPositions = anklePositions.filter(p => p.time <= currentTime && (p.leftAnkle.visibility > 0.5 || p.rightAnkle.visibility > 0.5));
+            console.log("Drawing analysis for time:", currentTime);
+            console.log("Ankle positions:")
+            console.log(anklePositions); // Log all ankle positions
+            // const filteredPositions = anklePositions.filter(p => p.time <= currentTime && (p.leftAnkle.visibility > 0.5 || p.rightAnkle.visibility > 0.5)); ← visibilityは不要
+            const filteredPositions = anklePositions.filter(p => p.time <= currentTime);
+            console.log("Filtered positions:", filteredPositions); // Log filtered positions
+            if (filteredPositions.length === 0) {
+                console.warn("No positions found for the selected time range.");
+                loadingTxt.textContent = "情報: 選択した時間範囲に足首の座標データがありません。";
+            } else {
+                loadingTxt.textContent = "移動分析結果を表示中...";
+            }
             
             if (filteredPositions.length > 0) {
                 drawTrajectory(filteredPositions);
                 drawHeatmap(filteredPositions);
             } else {
-                ctxTrajectory.font = "16px Arial";
+                ctxTrajectory.font = "50px Arial";
                 ctxTrajectory.fillStyle = "gray";
                 ctxTrajectory.textAlign = "center";
                 ctxTrajectory.fillText("この時間範囲に表示できる軌跡データがありません。", trajectoryCanvas.width / 2, trajectoryCanvas.height / 2);
 
-                ctxHeatmap.font = "16px Arial";
+                ctxHeatmap.font = "50px Arial";
                 ctxHeatmap.fillStyle = "gray";
                 ctxHeatmap.textAlign = "center";
                 ctxHeatmap.fillText("この時間範囲に表示できるヒートマップデータがありません。", heatmapCanvas.width / 2, heatmapCanvas.height / 2);
@@ -456,7 +466,8 @@
             ctxTrajectory.beginPath();
             let firstLeft = true;
             for (const pos of positions) {
-                if (pos.leftAnkle && pos.leftAnkle.visibility > 0.5) {
+                // if (pos.leftAnkle && pos.leftAnkle.visibility > 0.5) { ← visibilityは不要
+                if (pos.leftAnkle) {
                     const x = pos.leftAnkle.x * trajectoryCanvas.width;
                     const y = pos.leftAnkle.y * trajectoryCanvas.height;
                     if (firstLeft) {
@@ -476,7 +487,8 @@
             ctxTrajectory.beginPath();
             let firstRight = true;
             for (const pos of positions) {
-                 if (pos.rightAnkle && pos.rightAnkle.visibility > 0.5) {
+                // if (pos.rightAnkle && pos.rightAnkle.visibility > 0.5) { // ← visibilityは不要
+                if (pos.rightAnkle) {
                     const x = pos.rightAnkle.x * trajectoryCanvas.width;
                     const y = pos.rightAnkle.y * trajectoryCanvas.height;
                     if (firstRight) {
@@ -504,13 +516,15 @@
             let maxHits = 0;
 
             for (const pos of positions) {
-                if (pos.leftAnkle && pos.leftAnkle.visibility > 0.5) {
+                // if (pos.leftAnkle && pos.leftAnkle.visibility > 0.5) { // ← visibilityは不要
+                if (pos.leftAnkle) {
                     const gridX = Math.min(HEATMAP_GRID_SIZE - 1, Math.max(0, Math.floor(pos.leftAnkle.x * HEATMAP_GRID_SIZE)));
                     const gridY = Math.min(HEATMAP_GRID_SIZE - 1, Math.max(0, Math.floor(pos.leftAnkle.y * HEATMAP_GRID_SIZE)));
                     heatmapData[gridY][gridX]++;
                     if (heatmapData[gridY][gridX] > maxHits) maxHits = heatmapData[gridY][gridX];
                 }
-                if (pos.rightAnkle && pos.rightAnkle.visibility > 0.5) {
+                //if (pos.rightAnkle && pos.rightAnkle.visibility > 0.5) {
+                if (pos.rightAnkle) {
                     const gridX = Math.min(HEATMAP_GRID_SIZE - 1, Math.max(0, Math.floor(pos.rightAnkle.x * HEATMAP_GRID_SIZE)));
                     const gridY = Math.min(HEATMAP_GRID_SIZE - 1, Math.max(0, Math.floor(pos.rightAnkle.y * HEATMAP_GRID_SIZE)));
                     heatmapData[gridY][gridX]++;
