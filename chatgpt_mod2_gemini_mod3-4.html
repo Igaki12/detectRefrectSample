@@ -1,0 +1,241 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>バドミントン動作分析アプリ – コート補正付き</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.jsdelivr.net/npm/mathjs@11.8.0/lib/browser/math.js"></script>
+  <style>
+    body{font-family:'Inter','Helvetica Neue',Arial,sans-serif;}
+    input[type="range"]::-webkit-slider-thumb{appearance:none;width:20px;height:20px;background:#fb923c;cursor:pointer;border-radius:50%;border:2px solid #fff;box-shadow:0 0 2px rgba(0,0,0,.3);}input[type="range"]::-moz-range-thumb{width:18px;height:18px;background:#fb923c;cursor:pointer;border-radius:50%;border:2px solid #fff;box-shadow:0 0 2px rgba(0,0,0,.3);}canvas.analysis-canvas{border:1px solid #e5e7eb;background:#f9fafb;}
+    /* --- トリミングオーバーレイ --- */
+    #trimOverlay{position:absolute;left:0;top:0;pointer-events:none;}
+  </style>
+</head>
+<body class="bg-gradient-to-br from-orange-100 via-amber-100 to-yellow-100 text-gray-800 p-4 min-h-screen flex items-center justify-center">
+<div class="container mx-auto bg-white bg-opacity-70 p-6 rounded-xl shadow-2xl w-full relative">
+  <header class="text-center mb-8">
+    <h1 class="text-4xl font-bold text-orange-600">バドミントン動作分析 <span class="text-sm text-gray-500">+ コート補正</span></h1>
+    <p class="text-gray-600 mt-1">動画から選手の動きを捉え、補正後の軌跡とヒートマップで可視化します。</p>
+  </header>
+
+  <!-- 1. 動画 -->
+  <section class="mb-8 p-4 border border-orange-200 rounded-lg bg-white/50">
+    <h2 class="text-2xl font-semibold mb-3 text-orange-500">1. 動画の準備</h2>
+    <input type="file" id="fileInput" accept="video/*" class="block w-full text-sm text-slate-500 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-semibold file:bg-orange-100 file:text-orange-700 hover:file:bg-orange-200 disabled:opacity-50 transition-colors" disabled>
+    <p id="loadingTxt" class="text-sm text-gray-500 mt-2">AIモデルを読み込んでいます...</p>
+    <div class="mt-4 grid grid-cols-1 md:grid-cols-2 gap-4 items-start relative">
+      <div>
+        <h3 class="text-lg font-medium text-gray-700 mb-1">オリジナル動画</h3>
+        <video id="video" controls class="w-full rounded-md shadow-md aspect-video hidden bg-gray-200"></video>
+      </div>
+      <div>
+        <h3 class="text-lg font-medium text-gray-700 mb-1">姿勢推定オーバーレイ</h3>
+        <canvas id="poseCanvas" class="w-full rounded-md shadow-md aspect-video hidden bg-gray-200"></canvas>
+        <!-- 補正用オーバーレイ -->
+        <canvas id="trimOverlay" class="hidden"></canvas>
+      </div>
+    </div>
+  </section>
+
+  <!-- 2. 録画 -->
+  <section class="mb-8 p-4 border border-orange-200 rounded-lg text-center bg-white/50">
+    <h2 class="text-2xl font-semibold mb-3 text-orange-500">2. 録画と座標取得</h2>
+    <button id="startButton" class="bg-orange-500 hover:bg-orange-600 text-white font-bold py-3 px-6 rounded-lg shadow-md disabled:opacity-50 transition-transform hover:scale-105" disabled>録画開始</button>
+    <button id="stopButton"  class="bg-red-500 hover:bg-red-600 text-white font-bold py-3 px-6 rounded-lg shadow-md disabled:opacity-50 ml-2 transition-transform hover:scale-105"  disabled>録画停止</button>
+    <a id="downloadLink" href="#" download="badminton_analysis.webm" class="hidden mt-4 inline-block bg-green-500 hover:bg-green-600 text-white font-bold py-3 px-6 rounded-lg shadow-md transition-transform hover:scale-105">録画をダウンロード</a>
+  </section>
+
+  <!-- 3. 分析 -->
+  <section id="analysisSection" class="mb-6 p-4 border border-orange-200 rounded-lg hidden bg-white/50">
+    <h2 class="text-2xl font-semibold mb-3 text-orange-500">3. 移動分析結果</h2>
+
+    <div class="flex flex-wrap gap-2 mb-4">
+      <button id="analyzeButton" class="flex-1 bg-blue-500 hover:bg-blue-600 text-white font-bold py-3 px-6 rounded-lg shadow-md transition-transform hover:scale-105">移動分析を開始・更新</button>
+      <button id="trimButton" class="flex-1 bg-violet-500 hover:bg-violet-600 text-white font-bold py-3 px-6 rounded-lg shadow-md transition-transform hover:scale-105 hidden">コートに合わせてトリミング</button>
+      <button id="applyTrimButton" class="flex-1 bg-emerald-500 hover:bg-emerald-600 text-white font-bold py-3 px-6 rounded-lg shadow-md transition-transform hover:scale-105 hidden">補正を適用</button>
+    </div>
+
+    <div id="visualizationControls" class="mt-4 hidden">
+      <label for="timeSlider" class="block mb-1 text-sm font-medium text-gray-700">表示時間範囲:</label>
+      <input type="range" id="timeSlider" min="0" max="100" value="100" step="0.1" class="w-full h-3 bg-orange-200 rounded-lg appearance-none cursor-pointer">
+      <div class="flex justify-between text-xs text-gray-500 mt-1">
+        <span id="sliderMinTime">0.0s</span>
+        <span id="sliderCurrentTimeLabel" class="font-semibold">現在: <span id="sliderCurrentTime">0.0s</span></span>
+        <span id="sliderMaxTime">0.0s</span>
+      </div>
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mt-6">
+        <div>
+          <h3 class="text-xl font-semibold mb-2 text-orange-500">移動軌跡 (補正後)</h3>
+          <p class="text-xs text-gray-500 mb-1">青: 左足首, 赤: 右足首</p>
+          <canvas id="trajectoryCanvas" class="w-full aspect-video analysis-canvas rounded-md shadow"></canvas>
+        </div>
+        <div>
+          <h3 class="text-xl font-semibold mb-2 text-orange-500">ヒートマップ (補正後)</h3>
+          <p class="text-xs text-gray-500 mb-1">滞在頻度が高いほど赤く表示</p>
+          <canvas id="heatmapCanvas" class="w-full aspect-video analysis-canvas rounded-md shadow"></canvas>
+        </div>
+      </div>
+    </div>
+  </section>
+</div>
+
+<!-- ===== JS (module) ===== -->
+<script type="module">
+import {PoseLandmarker, FilesetResolver, DrawingUtils} from "https://cdn.skypack.dev/@mediapipe/tasks-vision@0.10.10";
+
+// ========== DOM 要素 ==========
+const fileInput = document.getElementById('fileInput');
+const video = document.getElementById('video');
+const poseCanvas = document.getElementById('poseCanvas');
+const trimOverlay = document.getElementById('trimOverlay');
+const startButton = document.getElementById('startButton');
+const stopButton  = document.getElementById('stopButton');
+const downloadLink= document.getElementById('downloadLink');
+const loadingTxt  = document.getElementById('loadingTxt');
+const analysisSection = document.getElementById('analysisSection');
+const analyzeButton   = document.getElementById('analyzeButton');
+const trimButton      = document.getElementById('trimButton');
+const applyTrimButton = document.getElementById('applyTrimButton');
+const visualizationControls = document.getElementById('visualizationControls');
+const timeSlider = document.getElementById('timeSlider');
+const sliderMinTime = document.getElementById('sliderMinTime');
+const sliderCurrentTime = document.getElementById('sliderCurrentTime');
+const sliderMaxTime = document.getElementById('sliderMaxTime');
+const trajectoryCanvas = document.getElementById('trajectoryCanvas');
+const heatmapCanvas = document.getElementById('heatmapCanvas');
+
+const ctxPose = poseCanvas.getContext('2d');
+const ctxTrajectory = trajectoryCanvas.getContext('2d');
+const ctxHeatmap   = heatmapCanvas.getContext('2d');
+const ctxOverlay   = trimOverlay.getContext('2d');
+
+// ========== 変数 ==========
+let poseLandmarker=null, drawingUtilsPose=null;let lastVideoTime=-1;let anklePositions=[];let videoDuration=0;
+let mediaRecorder, stream=null, recordedChunks=[];
+
+// トリミング関連
+let trimMode=false;
+let dragIndex=-1;
+let trimApplied=false;
+let homographyMatrix=null; // mathjs Matrix 3x3
+// 四隅 (normalized 0-1) [TL, TR, BR, BL]
+let trimPoints=[{x:0.05,y:0.05},{x:0.95,y:0.05},{x:0.95,y:0.95},{x:0.05,y:0.95}];
+const POINT_RADIUS=8;
+
+const HEATMAP_GRID_SIZE=25;
+
+// ========== PoseLandmarker 初期化 ==========
+initPose();
+async function initPose(){
+  try{
+    const vision=await FilesetResolver.forVisionTasks("https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.10/wasm");
+    poseLandmarker=await PoseLandmarker.createFromOptions(vision,{baseOptions:{modelAssetPath:"https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task",delegate:"GPU"},runningMode:'VIDEO',numPoses:1});
+    loadingTxt.textContent="モデル読み込み完了。動画を選択してください。";
+    fileInput.disabled=false;
+  }catch(e){console.error(e);loadingTxt.textContent="モデル読み込みに失敗しました。";}
+}
+
+// ========== ファイル読み込み ==========
+fileInput.addEventListener('change',e=>{
+  const file=e.target.files[0];if(!file)return;
+  const url=URL.createObjectURL(file);
+  video.src=url;video.style.display='block';poseCanvas.style.display='block';
+  video.onloadedmetadata=()=>{
+    videoDuration=video.duration;
+    [poseCanvas,trajectoryCanvas,heatmapCanvas,trimOverlay].forEach(c=>{c.width=video.videoWidth;c.height=video.videoHeight;});
+    trimOverlay.classList.add('hidden'); // reset overlay
+    drawingUtilsPose=new DrawingUtils(ctxPose);
+    startButton.disabled=false;
+    analysisSection.classList.add('hidden');
+    anklePositions=[];recordedChunks=[];downloadLink.classList.add('hidden');
+    loadingTxt.textContent="動画の準備ができました。録画を開始できます。";
+  };
+});
+
+// ========== 描画ループ ==========
+function drawFrame(){
+  if(!video||video.paused||video.ended||video.readyState<2){requestAnimationFrame(drawFrame);return;}
+  ctxPose.clearRect(0,0,poseCanvas.width,poseCanvas.height);
+  ctxPose.drawImage(video,0,0,poseCanvas.width,poseCanvas.height);
+
+  if(poseLandmarker&&video.currentTime!==lastVideoTime){
+    const startTimeMs=performance.now();lastVideoTime=video.currentTime;
+    poseLandmarker.detectForVideo(video,startTimeMs,res=>{
+      if(res.landmarks&&res.landmarks.length>0){
+        const lm=res.landmarks[0];
+        drawingUtilsPose.drawConnectors(lm,PoseLandmarker.POSE_CONNECTIONS,{color:'#FF8A65',lineWidth:2});
+        drawingUtilsPose.drawLandmarks(lm,{color:'#FFAB91',radius:3});
+        if(mediaRecorder&&mediaRecorder.state==='recording'){
+          anklePositions.push({time:video.currentTime,left:{x:lm[27].x,y:lm[27].y,vis:lm[27].visibility},right:{x:lm[28].x,y:lm[28].y,vis:lm[28].visibility}});
+        }
+      }
+    });
+  }
+  if(trimMode) drawTrimOverlay();
+  requestAnimationFrame(drawFrame);
+}
+video.addEventListener('play',()=>{lastVideoTime=-1;requestAnimationFrame(drawFrame);});
+video.addEventListener('ended',()=>{if(mediaRecorder&&mediaRecorder.state==='recording')stopRec();});
+
+// ========== 録画 ==========
+startButton.addEventListener('click',()=>{
+  stream = poseCanvas.captureStream ? poseCanvas.captureStream(30): video.captureStream? video.captureStream(30): null;
+  if(!stream){loadingTxt.textContent="録画に対応していません";return;}
+  video.play(); anklePositions=[]; recordedChunks=[];
+  try{mediaRecorder=new MediaRecorder(stream,{mimeType:'video/webm;codecs=vp9'});}catch(e){mediaRecorder=new MediaRecorder(stream,{mimeType:'video/webm'});}
+  mediaRecorder.ondataavailable=e=>{if(e.data.size>0)recordedChunks.push(e.data);};
+  mediaRecorder.onstop=()=>{
+    downloadLink.href=URL.createObjectURL(new Blob(recordedChunks,{type:'video/webm'})); downloadLink.classList.remove('hidden');
+    analysisSection.classList.remove('hidden'); analyzeButton.disabled=false; visualizationControls.classList.add('hidden'); trimButton.classList.remove('hidden');
+    setSliderRange();loadingTxt.textContent="録画完了。分析またはトリミングを行えます。";
+  };
+  mediaRecorder.start();startButton.disabled=true;stopButton.disabled=false;loadingTxt.textContent="録画中...";
+});
+stopButton.addEventListener('click',stopRec);
+function stopRec(){if(mediaRecorder&&mediaRecorder.state==='recording')mediaRecorder.stop();stream.getTracks().forEach(t=>t.stop());stream=null;startButton.disabled=false;stopButton.disabled=true;}
+
+// ========== 分析 ==========
+analyzeButton.addEventListener('click',()=>{if(anklePositions.length===0){loadingTxt.textContent="分析データがありません";return;}
+  visualizationControls.classList.remove('hidden'); drawAnalysis(+timeSlider.value);
+});
+
+timeSlider.addEventListener('input',()=>{sliderCurrentTime.textContent=`${(+timeSlider.value).toFixed(1)}s`;drawAnalysis(+timeSlider.value);});
+function setSliderRange(){const max=anklePositions.at(-1)?.time||videoDuration;timeSlider.max=max.toFixed(1);timeSlider.value=max.toFixed(1);sliderMaxTime.textContent=`${max.toFixed(1)}s`;sliderCurrentTime.textContent=`${max.toFixed(1)}s`;sliderMinTime.textContent="0.0s";}
+
+function drawAnalysis(t){ctxTrajectory.clearRect(0,0,trajectoryCanvas.width,trajectoryCanvas.height);ctxHeatmap.clearRect(0,0,heatmapCanvas.width,heatmapCanvas.height);
+  const data=anklePositions.filter(p=>p.time<=t);
+  if(data.length===0)return;
+  drawTrajectory(data);
+  drawHeatmap(data);
+}
+function maybeTransform(p){if(!trimApplied||!homographyMatrix)return p;const src=[p.x*poseCanvas.width,p.y*poseCanvas.height,1];const dst=math.multiply(homographyMatrix,src);return{x:dst.get([0])/dst.get([2])/trajectoryCanvas.width,y:dst.get([1])/dst.get([2])/trajectoryCanvas.height};}
+function drawTrajectory(list){ctxTrajectory.lineWidth=2;
+  ctxTrajectory.strokeStyle='rgba(59,130,246,0.8)';ctxTrajectory.beginPath();let first=true;for(const p of list){const tr=maybeTransform(p.left);const x=tr.x*trajectoryCanvas.width,y=tr.y*trajectoryCanvas.height;if(first){ctxTrajectory.moveTo(x,y);first=false;}else ctxTrajectory.lineTo(x,y);}ctxTrajectory.stroke();
+  ctxTrajectory.strokeStyle='rgba(239,68,68,0.8)';ctxTrajectory.beginPath();first=true;for(const p of list){const tr=maybeTransform(p.right);const x=tr.x*trajectoryCanvas.width,y=tr.y*trajectoryCanvas.height;if(first){ctxTrajectory.moveTo(x,y);first=false;}else ctxTrajectory.lineTo(x,y);}ctxTrajectory.stroke();}
+function drawHeatmap(list){const gridW=heatmapCanvas.width/HEATMAP_GRID_SIZE,gridH=heatmapCanvas.height/HEATMAP_GRID_SIZE;const heat=Array.from({length:HEATMAP_GRID_SIZE},()=>Array(HEATMAP_GRID_SIZE).fill(0));let max=0;
+  list.forEach(p=>{['left','right'].forEach(k=>{let tr=maybeTransform(p[k]);const gx=Math.min(HEATMAP_GRID_SIZE-1,Math.max(0,Math.floor(tr.x*HEATMAP_GRID_SIZE)));const gy=Math.min(HEATMAP_GRID_SIZE-1,Math.max(0,Math.floor(tr.y*HEATMAP_GRID_SIZE)));heat[gy][gx]++;if(heat[gy][gx]>max)max=heat[gy][gx];});});
+  for(let y=0;y<HEATMAP_GRID_SIZE;y++)for(let x=0;x<HEATMAP_GRID_SIZE;x++)if(heat[y][x]){const it=heat[y][x]/max;const r=Math.floor(255*Math.min(1,it*1.5));const g=Math.floor(255*Math.max(0,(1-it*1.5)));ctxHeatmap.fillStyle=`rgba(${r},${g},0,${Math.max(0.1,it*0.8)})`;ctxHeatmap.fillRect(x*gridW,y*gridH,gridW,gridH);} }
+
+// ========== トリミング UI ==========
+trimButton.addEventListener('click',()=>{trimMode=true;trimOverlay.classList.remove('hidden');applyTrimButton.classList.remove('hidden');});
+applyTrimButton.addEventListener('click',()=>{trimMode=false;trimOverlay.classList.add('hidden');applyTrimButton.classList.add('hidden');computeHomography();trimApplied=true;drawAnalysis(+timeSlider.value);loadingTxt.textContent="補正を適用しました。";});
+
+trimOverlay.addEventListener('mousedown',e=>{if(!trimMode)return;const rect=trimOverlay.getBoundingClientRect();const x=e.clientX-rect.left,y=e.clientY-rect.top;dragIndex=getClosestPointIndex(x,y);if(dragIndex>-1)trimOverlay.style.pointerEvents='auto';});
+window.addEventListener('mousemove',e=>{if(dragIndex===-1)return;const rect=trimOverlay.getBoundingClientRect();trimPoints[dragIndex]={x:(e.clientX-rect.left)/trimOverlay.width,y:(e.clientY-rect.top)/trimOverlay.height};});
+window.addEventListener('mouseup',()=>{dragIndex=-1;trimOverlay.style.pointerEvents='none';});
+function getClosestPointIndex(px,py){let min=Infinity,idx=-1;trimPoints.forEach((p,i)=>{const x=p.x*trimOverlay.width,y=p.y*trimOverlay.height;const d=Math.hypot(px-x,py-y);if(d<POINT_RADIUS*2&&d<min){min=d;idx=i;}});return idx;}
+function drawTrimOverlay(){ctxOverlay.clearRect(0,0,trimOverlay.width,trimOverlay.height);
+  ctxOverlay.lineWidth=2;ctxOverlay.strokeStyle='#9333ea';ctxOverlay.fillStyle='rgba(147,51,234,.2)';
+  ctxOverlay.beginPath();trimPoints.forEach((p,i)=>{const x=p.x*trimOverlay.width,y=p.y*trimOverlay.height;if(i===0)ctxOverlay.moveTo(x,y);else ctxOverlay.lineTo(x,y);});ctxOverlay.closePath();ctxOverlay.fill();ctxOverlay.stroke();
+  ctxOverlay.fillStyle='#9333ea';trimPoints.forEach(p=>{ctxOverlay.beginPath();ctxOverlay.arc(p.x*trimOverlay.width,p.y*trimOverlay.height,POINT_RADIUS,0,Math.PI*2);ctxOverlay.fill();});}
+
+// ========== ホモグラフィ計算 ==========
+function computeHomography(){const src=[];trimPoints.forEach(p=>src.push([p.x*poseCanvas.width,p.y*poseCanvas.height]));const dst=[[0,0],[poseCanvas.width,0],[poseCanvas.width,poseCanvas.height],[0,poseCanvas.height]];homographyMatrix=calcHomography(src,dst);} // 3x3 mathjs
+function calcHomography(src,dst){const A=[];for(let i=0;i<4;i++){const[x,y]=src[i],[X,Y]=dst[i];A.push([x,y,1,0,0,0,-X*x,-X*y]);A.push([0,0,0,x,y,1,-Y*x,-Y*y]);}
+  const b=[];dst.forEach(([X,Y])=>{b.push(X);b.push(Y);});
+  const h=math.lusolve(math.matrix(A),math.matrix(b));const H=math.concat(h,[1],0);return math.reshape(H,[3,3]);}
+</script>
+</body>
+</html>

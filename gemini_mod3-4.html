@@ -212,6 +212,7 @@
          * Initialize PoseLandmarker
          */
         async function initPoseLandmarker() {
+            console.log("[DEBUG] initPoseLandmarker: Start");
             try {
                 const vision = await FilesetResolver.forVisionTasks(
                     "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.10/wasm"
@@ -224,13 +225,14 @@
                     runningMode: runningMode,
                     numPoses: 1
                 });
-                console.log("PoseLandmarker initialized");
+                console.log("[DEBUG] initPoseLandmarker: PoseLandmarker initialized successfully.");
                 loadingTxt.textContent = "モデル読み込み完了。動画を選択してください。";
                 fileInput.disabled = false;
             } catch (err) {
-                console.error("Error initializing PoseLandmarker:", err);
+                console.error("[DEBUG] initPoseLandmarker: Error initializing PoseLandmarker:", err);
                 loadingTxt.textContent = "モデル読み込みに失敗しました。ページをリロードしてください。";
             }
+            console.log("[DEBUG] initPoseLandmarker: End");
         }
         initPoseLandmarker();
 
@@ -238,8 +240,13 @@
          * Handle file input change
          */
         fileInput.addEventListener('change', (event) => {
+            console.log("[DEBUG] fileInput change: Event triggered.");
             const file = event.target.files[0];
-            if (!file) return;
+            if (!file) {
+                console.log("[DEBUG] fileInput change: No file selected.");
+                return;
+            }
+            console.log("[DEBUG] fileInput change: File selected:", file.name);
 
             const fileURL = URL.createObjectURL(file);
             video.src = fileURL;
@@ -247,34 +254,38 @@
             poseCanvas.style.display = 'block';
             
             video.onloadedmetadata = () => {
+                console.log("[DEBUG] video.onloadedmetadata: Video metadata loaded.");
                 videoDuration = video.duration;
+                console.log("[DEBUG] video.onloadedmetadata: Video duration:", videoDuration);
                 [poseCanvas, trajectoryCanvas, heatmapCanvas].forEach(cvs => {
-                    // Keep aspect ratio of video for canvases
                     const aspectRatio = video.videoWidth / video.videoHeight;
-                    const canvasWidth = cvs.parentElement.clientWidth; // Fit to parent
+                    const canvasWidth = cvs.parentElement.clientWidth; 
                     cvs.width = canvasWidth;
                     cvs.height = canvasWidth / aspectRatio;
+                    console.log(`[DEBUG] video.onloadedmetadata: Resized canvas ${cvs.id} to ${cvs.width}x${cvs.height}`);
 
-                    if (cvs.id === "poseCanvas") { // Initialize crop points based on poseCanvas dimensions
+                    if (cvs.id === "poseCanvas") { 
                         resetCropPoints();
+                        console.log("[DEBUG] video.onloadedmetadata: Crop points reset for poseCanvas.");
                     }
                 });
                 drawingUtilsPose = new DrawingUtils(ctxPose);
                 startButton.disabled = false;
                 analysisSection.classList.add('hidden');
-                trimmingSection.classList.add('hidden'); // Hide trimming section on new video
+                trimmingSection.classList.add('hidden'); 
                 visualizationControls.classList.add('hidden');
                 anklePositions = [];
                 originalAnklePositionsForCorrection = [];
                 recordedChunks = [];
                 downloadLink.classList.add('hidden');
-                homographyMatrix = null; // Reset homography
-                isTrimmingMode = false; // Reset trimming mode
+                homographyMatrix = null; 
+                isTrimmingMode = false; 
                 removeTrimmingEventListeners();
                 loadingTxt.textContent = "動画の準備ができました。録画を開始できます。";
+                console.log("[DEBUG] video.onloadedmetadata: UI reset and ready for recording.");
             };
             video.onerror = () => {
-                console.error("Error loading video file.");
+                console.error("[DEBUG] video.onerror: Error loading video file.");
                 loadingTxt.textContent = "エラー: 動画ファイルの読み込みに失敗しました。";
             }
         });
@@ -282,30 +293,27 @@
         /**
          * Main drawing loop for pose estimation and trimming UI
          */
-        async function predictWebcam() { // Renamed from drawFrame for clarity as it does more than draw
+        async function predictWebcam() { 
             if (!video || video.readyState < 2) {
                 requestAnimationFrame(predictWebcam);
                 return;
             }
             
             ctxPose.clearRect(0, 0, poseCanvas.width, poseCanvas.height);
-            // Draw video frame onto poseCanvas for trimming background or pose overlay
-            if (!isTrimmingMode) { // Only draw video on poseCanvas if not trimming (video element is primary view then)
-                 ctxPose.drawImage(video, 0, 0, poseCanvas.width, poseCanvas.height);
+            if (!isTrimmingMode) { 
+                 // ctxPose.drawImage(video, 0, 0, poseCanvas.width, poseCanvas.height); //This line is drawn again inside detectForVideo callback
             }
 
-
             if (isTrimmingMode) {
-                // When trimming, draw video on main video element, and overlay on poseCanvas
-                // Ensure poseCanvas is transparent or has the video drawn if it's the main view for trimming
-                ctxPose.drawImage(video, 0, 0, poseCanvas.width, poseCanvas.height); // Draw video as background for trimming handles
+                ctxPose.drawImage(video, 0, 0, poseCanvas.width, poseCanvas.height); 
                 drawTrimmingOverlay();
             } else if (poseLandmarker && video.currentTime !== lastVideoTime && !video.paused && !video.ended) {
                 const startTimeMs = performance.now();
                 lastVideoTime = video.currentTime;
+                // console.log(`[DEBUG] predictWebcam: Detecting pose for time ${video.currentTime}`);
 
                 poseLandmarker.detectForVideo(video, startTimeMs, (result) => {
-                    ctxPose.clearRect(0, 0, poseCanvas.width, poseCanvas.height); // Clear before drawing video + pose
+                    ctxPose.clearRect(0, 0, poseCanvas.width, poseCanvas.height); 
                     ctxPose.drawImage(video, 0, 0, poseCanvas.width, poseCanvas.height);
                     if (result.landmarks && result.landmarks.length > 0) {
                         const landmarks = result.landmarks[0];
@@ -331,12 +339,15 @@
         }
           
         video.addEventListener('play', () => {
+            console.log("[DEBUG] video play event: Video playing.");
             lastVideoTime = -1;
             requestAnimationFrame(predictWebcam);
         });
           
         video.addEventListener('ended', () => {
+            console.log("[DEBUG] video ended event: Video ended.");
             if (mediaRecorder && mediaRecorder.state === 'recording') {
+                console.log("[DEBUG] video ended event: Stopping recording.");
                 stopRecording();
             }
         });
@@ -345,28 +356,30 @@
          * Start Recording
          */
         startButton.addEventListener('click', () => {
+            console.log("[DEBUG] startButton click: Start recording attempt.");
             if (isTrimmingMode) {
                 alert("トリミング調整モード中は録画を開始できません。調整を完了またはリセットしてください。");
+                console.warn("[DEBUG] startButton click: Recording blocked, in trimming mode.");
                 return;
             }
-            // Try to get stream from video element's current display (could be poseCanvas if that's where video is rendered)
-            // For simplicity, let's assume we always want to record what's shown on the poseCanvas if it includes pose.
-            // Or, record the raw video and apply pose detection + correction later.
-            // Current setup records poseCanvas.
+            
             if (poseCanvas.captureStream) {
                 stream = poseCanvas.captureStream(30);
+                 console.log("[DEBUG] startButton click: Stream captured from poseCanvas.");
             } else if (video.captureStream) { 
                  stream = video.captureStream(30);
+                 console.log("[DEBUG] startButton click: Stream captured from video element.");
             } else if (video.mozCaptureStream) { 
                 stream = video.mozCaptureStream(30);
+                console.log("[DEBUG] startButton click: Stream captured from video element (Firefox).");
             } else {
-                console.error("captureStream not supported.");
+                console.error("[DEBUG] startButton click: captureStream not supported.");
                 loadingTxt.textContent = "エラー: お使いのブラウザは録画機能に対応していません。";
                 return;
             }
 
             if (!stream) {
-                 console.error("ストリームの取得に失敗しました。");
+                 console.error("[DEBUG] startButton click: Failed to get stream.");
                  loadingTxt.textContent = "エラー: 録画ストリームの取得に失敗しました。";
                  return;
             }
@@ -376,20 +389,22 @@
             anklePositions = []; 
             originalAnklePositionsForCorrection = [];
             recordedChunks = [];
-            homographyMatrix = null; // Reset any previous correction
+            homographyMatrix = null; 
+            console.log("[DEBUG] startButton click: Recording variables reset.");
 
             try {
                 mediaRecorder = new MediaRecorder(stream, { mimeType: 'video/webm; codecs=vp9' });
             } catch (e) {
-                console.error("Error creating MediaRecorder (vp9):", e);
+                console.error("[DEBUG] startButton click: Error creating MediaRecorder (vp9):", e);
                 try {
                     mediaRecorder = new MediaRecorder(stream, { mimeType: 'video/webm' });
                 } catch (e2) {
-                    console.error("Error creating MediaRecorder (default webm):", e2);
+                    console.error("[DEBUG] startButton click: Error creating MediaRecorder (default webm):", e2);
                     loadingTxt.textContent = "エラー: MediaRecorderの作成に失敗しました。録画を開始できません。";
                     return;
                 }
             }
+            console.log("[DEBUG] startButton click: MediaRecorder created.");
 
             mediaRecorder.ondataavailable = (event) => {
                 if (event.data && event.data.size > 0) {
@@ -398,20 +413,23 @@
             };
 
             mediaRecorder.onstop = () => {
+                console.log("[DEBUG] mediaRecorder.onstop: Recording stopped.");
                 const blob = new Blob(recordedChunks, { type: 'video/webm' });
                 const url = URL.createObjectURL(blob);
                 downloadLink.href = url;
                 downloadLink.classList.remove('hidden');
                 
-                // Store raw ankle positions for potential correction
-                originalAnklePositionsForCorrection = JSON.parse(JSON.stringify(anklePositions)); // Deep copy
+                console.log("[DEBUG] mediaRecorder.onstop: Ankle positions collected during recording:", JSON.parse(JSON.stringify(anklePositions)));
+                originalAnklePositionsForCorrection = JSON.parse(JSON.stringify(anklePositions)); 
+                console.log("[DEBUG] mediaRecorder.onstop: Copied to originalAnklePositionsForCorrection:", JSON.parse(JSON.stringify(originalAnklePositionsForCorrection)));
+
 
                 analysisSection.classList.remove('hidden');
                 analyzeButton.disabled = false;
-                trimmingSection.classList.remove('hidden'); // Show trimming section
+                trimmingSection.classList.remove('hidden'); 
                 startTrimmingButton.disabled = false;
                 resetTrimmingButton.disabled = false;
-                applyCorrectionButton.disabled = true; // Enabled when trimming starts
+                applyCorrectionButton.disabled = true; 
 
                 visualizationControls.classList.add('hidden'); 
 
@@ -429,35 +447,38 @@
                 }
                 sliderMinTime.textContent = "0.0s";
                 loadingTxt.textContent = "録画が完了しました。移動分析またはコート範囲調整を開始できます。";
+                console.log("[DEBUG] mediaRecorder.onstop: UI updated for analysis/trimming.");
             };
               
             mediaRecorder.onerror = (event) => {
-                console.error("MediaRecorder error:", event.error);
+                console.error("[DEBUG] mediaRecorder.onerror: MediaRecorder error:", event.error);
                 loadingTxt.textContent = `エラー: 録画中にエラーが発生しました: ${event.error.name}`;
                 stopRecording();
             };
 
             mediaRecorder.start();
-            console.log('Recording started');
+            console.log('[DEBUG] mediaRecorder.start: Recording started.');
             loadingTxt.textContent = "録画中です...";
             startButton.disabled = true;
             stopButton.disabled = false;
             downloadLink.classList.add('hidden');
             analyzeButton.disabled = true; 
-            trimmingSection.classList.add('hidden'); // Hide trimming during recording
+            trimmingSection.classList.add('hidden'); 
         });
 
         /**
          * Stop Recording
          */
         function stopRecording() {
+            console.log("[DEBUG] stopRecording: Function called.");
             if (mediaRecorder && mediaRecorder.state === 'recording') {
                 mediaRecorder.stop();
-                console.log('Recording stopped');
+                console.log('[DEBUG] stopRecording: MediaRecorder stopped.');
             }
             if (stream) {
                 stream.getTracks().forEach(track => track.stop());
                 stream = null; 
+                console.log('[DEBUG] stopRecording: Stream tracks stopped.');
             }
             startButton.disabled = false;
             stopButton.disabled = true;
@@ -468,15 +489,19 @@
          * Analyze Button Click
          */
         analyzeButton.addEventListener('click', () => {
+            console.log("[DEBUG] analyzeButton click: Analysis triggered.");
+            console.log("[DEBUG] analyzeButton click: Current originalAnklePositionsForCorrection length:", originalAnklePositionsForCorrection.length);
+            console.log("[DEBUG] analyzeButton click: Current anklePositions (live) length:", anklePositions.length);
+
             if (originalAnklePositionsForCorrection.length === 0 && anklePositions.length === 0) {
-                console.warn("分析する足首の座標データがありません。");
+                console.warn("[DEBUG] analyzeButton click: No ankle position data to analyze.");
                 loadingTxt.textContent = "情報: 分析データがありません。先に動画を録画してください。";
                 return;
             }
             visualizationControls.classList.remove('hidden');
-            // drawAnalysis will use originalAnklePositionsForCorrection and apply homography if available
             drawAnalysis(parseFloat(timeSlider.value)); 
             loadingTxt.textContent = "移動分析結果を表示しています。";
+            console.log("[DEBUG] analyzeButton click: Analysis display updated.");
         });
 
         /**
@@ -484,6 +509,7 @@
          */
         timeSlider.addEventListener('input', () => {
             const currentTime = parseFloat(timeSlider.value);
+            // console.log(`[DEBUG] timeSlider input: Slider changed to ${currentTime}s.`);
             sliderCurrentTime.textContent = `${currentTime.toFixed(1)}s`;
             if (!visualizationControls.classList.contains('hidden')) { 
                  drawAnalysis(currentTime);
@@ -495,34 +521,39 @@
          * Uses originalAnklePositionsForCorrection and applies homography if matrix exists
          */
         function drawAnalysis(currentTime) {
+            console.log(`[DEBUG] drawAnalysis: Drawing analysis for time: ${currentTime}`);
             ctxTrajectory.clearRect(0, 0, trajectoryCanvas.width, trajectoryCanvas.height);
             ctxHeatmap.clearRect(0, 0, heatmapCanvas.width, heatmapCanvas.height);
 
-            // Draw court outline (simple rectangle) on trajectory and heatmap canvases
-            ctxTrajectory.strokeStyle = '#888'; // Light gray for court outline
+            ctxTrajectory.strokeStyle = '#888'; 
             ctxTrajectory.lineWidth = 2;
             ctxTrajectory.strokeRect(0, 0, trajectoryCanvas.width, trajectoryCanvas.height);
-            // You might want a different or no outline for heatmap based on preference
-
+            
             let positionsToAnalyze;
             const basePositions = originalAnklePositionsForCorrection.length > 0 ? originalAnklePositionsForCorrection : anklePositions;
+            console.log("[DEBUG] drawAnalysis: Using basePositions length:", basePositions.length, originalAnklePositionsForCorrection.length > 0 ? "(from originalAnklePositionsForCorrection)" : "(from live anklePositions)");
 
             if (homographyMatrix && cropPoints.length === 4) {
+                console.log("[DEBUG] drawAnalysis: Applying homography correction. Matrix:", homographyMatrix);
                 positionsToAnalyze = correctAnklePositions([...basePositions], homographyMatrix, poseCanvas.width, poseCanvas.height);
             } else {
-                positionsToAnalyze = [...basePositions]; // Use a copy of the original (or raw after recording)
+                console.log("[DEBUG] drawAnalysis: No homography matrix or crop points not set. Using base positions directly.");
+                positionsToAnalyze = [...basePositions]; 
             }
+            console.log("[DEBUG] drawAnalysis: positionsToAnalyze (after potential correction) length:", positionsToAnalyze.length);
+            if(positionsToAnalyze.length > 0) console.log("[DEBUG] drawAnalysis: Sample position to analyze [0]:", JSON.parse(JSON.stringify(positionsToAnalyze[0])));
             
             const filteredPositions = positionsToAnalyze.filter(p => p.time <= currentTime);
+            console.log(`[DEBUG] drawAnalysis: Filtered positions for time <= ${currentTime}, count: ${filteredPositions.length}`);
             
             if (filteredPositions.length === 0) {
+                console.warn("[DEBUG] drawAnalysis: No positions found for the selected time range.");
                 const noDataMsg = "この時間範囲に表示できるデータがありません。";
                 [ctxTrajectory, ctxHeatmap].forEach(ctx => {
-                    ctx.font = "16px Arial"; // Adjusted font size for better fit
+                    ctx.font = "16px Arial"; 
                     ctx.fillStyle = "gray";
                     ctx.textAlign = "center";
                     const canvas = ctx.canvas;
-                    // Wrap text if too long
                     const words = noDataMsg.split('');
                     let line = '';
                     let y = canvas.height / 2 - 10;
@@ -533,7 +564,7 @@
                         if (testWidth > canvas.width * 0.9 && n > 0) {
                             ctx.fillText(line, canvas.width / 2, y);
                             line = words[n];
-                            y += 20; // Line height
+                            y += 20; 
                         } else {
                             line = testLine;
                         }
@@ -545,24 +576,28 @@
             } else {
                  loadingTxt.textContent = "移動分析結果を表示中...";
             }
-              
+            
+            console.log("[DEBUG] drawAnalysis: Calling drawTrajectory.");
             drawTrajectory(filteredPositions, trajectoryCanvas, ctxTrajectory);
+            console.log("[DEBUG] drawAnalysis: Calling drawHeatmap.");
             drawHeatmap(filteredPositions, heatmapCanvas, ctxHeatmap);
+            console.log("[DEBUG] drawAnalysis: Finished drawing analysis visualizations.");
         }
 
         /**
          * Draw Trajectory on a given canvas
          */
         function drawTrajectory(positions, canvas, ctx) {
+            console.log(`[DEBUG] drawTrajectory: Drawing trajectory with ${positions.length} positions.`);
             ctx.lineWidth = 2;
             const drawSingleTrajectory = (ankleKey, color) => {
+                console.log(`[DEBUG] drawTrajectory: Drawing for ${ankleKey} with color ${color}`);
                 ctx.strokeStyle = color;
                 ctx.beginPath();
                 let firstPoint = true;
                 for (const pos of positions) {
                     const ankle = pos[ankleKey];
-                    if (ankle && typeof ankle.x === 'number' && typeof ankle.y === 'number') { // Check if x,y are valid numbers
-                        // Coordinates are expected to be normalized (0-1) for the target court
+                    if (ankle && typeof ankle.x === 'number' && typeof ankle.y === 'number') { 
                         const x = ankle.x * canvas.width;
                         const y = ankle.y * canvas.height;
                         if (firstPoint) {
@@ -572,19 +607,22 @@
                             ctx.lineTo(x, y);
                         }
                     } else {
-                        firstPoint = true; // Reset if a point is missing or invalid
+                        // console.warn(`[DEBUG] drawTrajectory: Invalid or missing ${ankleKey} data for a point.`, ankle);
+                        firstPoint = true; 
                     }
                 }
                 ctx.stroke();
             };
             drawSingleTrajectory('leftAnkle', 'rgba(59, 130, 246, 0.8)'); // Blue
             drawSingleTrajectory('rightAnkle', 'rgba(239, 68, 68, 0.8)'); // Red
+            console.log("[DEBUG] drawTrajectory: Trajectory drawing complete.");
         }
 
         /**
          * Draw Heatmap on a given canvas
          */
         function drawHeatmap(positions, canvas, ctx) {
+            console.log(`[DEBUG] drawHeatmap: Drawing heatmap with ${positions.length} positions.`);
             const gridW = canvas.width / HEATMAP_GRID_SIZE;
             const gridH = canvas.height / HEATMAP_GRID_SIZE;
             const heatmapData = Array(HEATMAP_GRID_SIZE).fill(null).map(() => Array(HEATMAP_GRID_SIZE).fill(0));
@@ -592,11 +630,12 @@
 
             const processAnkle = (ankle) => {
                 if (ankle && typeof ankle.x === 'number' && typeof ankle.y === 'number') {
-                    // Coordinates are expected to be normalized (0-1) for the target court
                     const gridX = Math.min(HEATMAP_GRID_SIZE - 1, Math.max(0, Math.floor(ankle.x * HEATMAP_GRID_SIZE)));
                     const gridY = Math.min(HEATMAP_GRID_SIZE - 1, Math.max(0, Math.floor(ankle.y * HEATMAP_GRID_SIZE)));
                     heatmapData[gridY][gridX]++;
                     if (heatmapData[gridY][gridX] > maxHits) maxHits = heatmapData[gridY][gridX];
+                } else {
+                    // console.warn("[DEBUG] drawHeatmap: Invalid or missing ankle data for heatmap processing.", ankle);
                 }
             };
 
@@ -604,8 +643,12 @@
                 processAnkle(pos.leftAnkle);
                 processAnkle(pos.rightAnkle);
             }
+            console.log(`[DEBUG] drawHeatmap: Max hits in a grid cell: ${maxHits}`);
 
-            if (maxHits === 0) return; 
+            if (maxHits === 0) {
+                console.log("[DEBUG] drawHeatmap: No hits, skipping heatmap drawing.");
+                return;
+            }
 
             for (let y = 0; y < HEATMAP_GRID_SIZE; y++) {
                 for (let x = 0; x < HEATMAP_GRID_SIZE; x++) {
@@ -619,90 +662,95 @@
                     }
                 }
             }
+            console.log("[DEBUG] drawHeatmap: Heatmap drawing complete.");
         }
 
         // --- Trimming and Correction Logic ---
 
         function resetCropPoints() {
-            // Initialize cropPoints to the corners of the poseCanvas
-            // These are in PIXEL coordinates of the poseCanvas
             cropPoints = [
-                { x: 0, y: 0 },                                      // Top-left
-                { x: poseCanvas.width, y: 0 },                       // Top-right
-                { x: poseCanvas.width, y: poseCanvas.height },      // Bottom-right
-                { x: 0, y: poseCanvas.height }                       // Bottom-left
+                { x: 0, y: 0 },                                      
+                { x: poseCanvas.width, y: 0 },                       
+                { x: poseCanvas.width, y: poseCanvas.height },      
+                { x: 0, y: poseCanvas.height }                       
             ];
+            console.log("[DEBUG] resetCropPoints: Crop points reset to canvas defaults:", JSON.parse(JSON.stringify(cropPoints)));
         }
         
         startTrimmingButton.addEventListener('click', () => {
+            console.log("[DEBUG] startTrimmingButton click: Entering trimming mode.");
             isTrimmingMode = true;
-            video.pause(); // Pause video to make selection easier
+            video.pause(); 
             trimmingInstructions.textContent = "コートの四隅をドラッグして調整後、「座標を補正」を押します。";
             startTrimmingButton.disabled = true;
             applyCorrectionButton.disabled = false;
             resetTrimmingButton.disabled = false;
-            analyzeButton.disabled = true; // Disable analysis button during trimming
-            fileInput.disabled = true; // Disable file input during trimming
-            startButton.disabled = true; // Disable recording start
+            analyzeButton.disabled = true; 
+            fileInput.disabled = true; 
+            startButton.disabled = true; 
 
-            if (cropPoints.length !== 4) { // Initialize if not already set (e.g. first time)
+            if (cropPoints.length !== 4) { 
                 resetCropPoints();
             }
             addTrimmingEventListeners();
-            requestAnimationFrame(predictWebcam); // Ensure trimming UI is drawn
+            requestAnimationFrame(predictWebcam); 
+            console.log("[DEBUG] startTrimmingButton click: Trimming mode setup complete.");
         });
 
         applyCorrectionButton.addEventListener('click', () => {
+            console.log("[DEBUG] applyCorrectionButton click: Attempting to apply correction.");
             if (cropPoints.length !== 4) {
                 trimmingInstructions.textContent = "エラー: 4つの角が定義されていません。";
+                console.error("[DEBUG] applyCorrectionButton click: Crop points not defined.");
                 return;
             }
             isTrimmingMode = false;
             removeTrimmingEventListeners();
+            console.log("[DEBUG] applyCorrectionButton click: Exited trimming mode.");
             
-            // Compute homography matrix: maps from cropPoints (pixels on poseCanvas) to TARGET_COURT_RECT_NORMALIZED (0-1)
             homographyMatrix = computeHomographyMatrix(cropPoints, TARGET_COURT_RECT_NORMALIZED);
+            console.log("[DEBUG] applyCorrectionButton click: Computed homographyMatrix:", homographyMatrix);
             
             trimmingInstructions.textContent = "座標補正を適用しました。分析を更新してください。";
             startTrimmingButton.disabled = false;
             applyCorrectionButton.disabled = true;
-            // resetTrimmingButton remains enabled
-            analyzeButton.disabled = false; // Re-enable analysis
+            analyzeButton.disabled = false; 
             fileInput.disabled = false;
-            // startButton remains disabled until reset or new video
 
-            // Redraw analysis with new correction
             if (!visualizationControls.classList.contains('hidden')) {
+                 console.log("[DEBUG] applyCorrectionButton click: Redrawing analysis with new correction.");
                  drawAnalysis(parseFloat(timeSlider.value));
             }
-            requestAnimationFrame(predictWebcam); // Redraw canvas without trimming UI
+            requestAnimationFrame(predictWebcam); 
         });
 
         resetTrimmingButton.addEventListener('click', () => {
+            console.log("[DEBUG] resetTrimmingButton click: Resetting trimming.");
             isTrimmingMode = false;
             removeTrimmingEventListeners();
-            homographyMatrix = null; // Clear correction
-            resetCropPoints(); // Reset visual points to default
+            homographyMatrix = null; 
+            resetCropPoints(); 
             
             trimmingInstructions.textContent = "トリミング調整をリセットしました。";
             startTrimmingButton.disabled = false;
             applyCorrectionButton.disabled = true;
             analyzeButton.disabled = false;
             fileInput.disabled = false;
-            // startButton re-enabled if a video is loaded
 
-            // Redraw analysis with original data
             if (!visualizationControls.classList.contains('hidden')) {
+                 console.log("[DEBUG] resetTrimmingButton click: Redrawing analysis with original data.");
                  drawAnalysis(parseFloat(timeSlider.value));
             }
-            requestAnimationFrame(predictWebcam); // Redraw canvas without trimming UI
+            requestAnimationFrame(predictWebcam); 
+             console.log("[DEBUG] resetTrimmingButton click: Trimming reset complete.");
         });
 
         function addTrimmingEventListeners() {
             poseCanvas.addEventListener('mousedown', handleMouseDownTrimming);
             poseCanvas.addEventListener('mousemove', handleMouseMoveTrimming);
             poseCanvas.addEventListener('mouseup', handleMouseUpTrimming);
-            poseCanvas.addEventListener('mouseleave', handleMouseUpTrimming); // Stop dragging if mouse leaves
+            poseCanvas.addEventListener('mouseleave', handleMouseUpTrimming); 
+            console.log("[DEBUG] addTrimmingEventListeners: Trimming event listeners added.");
         }
 
         function removeTrimmingEventListeners() {
@@ -710,13 +758,13 @@
             poseCanvas.removeEventListener('mousemove', handleMouseMoveTrimming);
             poseCanvas.removeEventListener('mouseup', handleMouseUpTrimming);
             poseCanvas.removeEventListener('mouseleave', handleMouseUpTrimming);
+            console.log("[DEBUG] removeTrimmingEventListeners: Trimming event listeners removed.");
         }
         
         function drawTrimmingOverlay() {
-            // ctxPose is used for drawing the trimming UI
             if (cropPoints.length !== 4) return;
+            // console.log("[DEBUG] drawTrimmingOverlay: Drawing trimming UI.");
 
-            // Draw semi-transparent overlay to dim the area outside selection (optional but good UX)
             ctxPose.fillStyle = "rgba(0, 0, 0, 0.3)";
             ctxPose.fillRect(0, 0, poseCanvas.width, poseCanvas.height);
 
@@ -728,14 +776,12 @@
             }
             ctxPose.closePath();
             
-            // This makes the selected area clear
             ctxPose.globalCompositeOperation = 'destination-out';
-            ctxPose.fillStyle = "black"; // Color doesn't matter with destination-out
+            ctxPose.fillStyle = "black"; 
             ctxPose.fill();
-            ctxPose.restore(); // Restore composite operation and fill style
+            ctxPose.restore(); 
 
-            // Draw border for the selected quad
-            ctxPose.strokeStyle = 'rgba(255, 0, 0, 0.9)'; // Bright red for visibility
+            ctxPose.strokeStyle = 'rgba(255, 0, 0, 0.9)'; 
             ctxPose.lineWidth = 2;
             ctxPose.beginPath();
             ctxPose.moveTo(cropPoints[0].x, cropPoints[0].y);
@@ -745,7 +791,6 @@
             ctxPose.closePath();
             ctxPose.stroke();
 
-            // Draw draggable handles
             ctxPose.fillStyle = 'rgba(255, 0, 0, 0.9)';
             for (let i = 0; i < 4; i++) {
                 ctxPose.beginPath();
@@ -771,6 +816,7 @@
                 if (dx * dx + dy * dy < HANDLE_RADIUS * HANDLE_RADIUS) {
                     draggingPointIndex = i;
                     poseCanvas.classList.add('trimming-handle');
+                    // console.log(`[DEBUG] handleMouseDownTrimming: Started dragging point ${i}`);
                     return;
                 }
             }
@@ -779,116 +825,102 @@
         function handleMouseMoveTrimming(event) {
             if (!isTrimmingMode || draggingPointIndex === -1) return;
             const mousePos = getMousePos(poseCanvas, event);
-            // Clamp points to be within canvas boundaries
             cropPoints[draggingPointIndex].x = Math.max(0, Math.min(poseCanvas.width, mousePos.x));
             cropPoints[draggingPointIndex].y = Math.max(0, Math.min(poseCanvas.height, mousePos.y));
-            // No need to call predictWebcam directly, it's on RAF loop.
-            // RAF loop in predictWebcam will call drawTrimmingOverlay if isTrimmingMode is true.
+            // console.log(`[DEBUG] handleMouseMoveTrimming: Dragging point ${draggingPointIndex} to`, cropPoints[draggingPointIndex]);
         }
 
         function handleMouseUpTrimming() {
             if (!isTrimmingMode) return;
+            // console.log(`[DEBUG] handleMouseUpTrimming: Stopped dragging point ${draggingPointIndex}`);
             draggingPointIndex = -1;
             poseCanvas.classList.remove('trimming-handle');
         }
 
         /**
          * Computes the homography matrix.
-         * @param {Array<{x:number, y:number}>} srcPts - Array of 4 source points (pixels on poseCanvas).
-         * @param {Array<{x:number, y:number}>} dstPtsNorm - Array of 4 destination points (normalized 0-1 for target court).
-         * @returns {Array<number>|null} 3x3 homography matrix (row-major order) or null if calculation fails.
-         *
-         * IMPORTANT NOTE: This is a STUB/PLACEHOLDER. True homography calculation is complex
-         * and involves solving a system of 8 linear equations from the 4 point correspondences.
-         * This typically requires matrix library functions (e.g., for Gaussian elimination or SVD).
-         * For a real application, consider using a library like OpenCV.js (cv.findHomography)
-         * or implementing the matrix math robustly.
          */
         function computeHomographyMatrix(srcPts, dstPtsNorm) {
+            console.log("[DEBUG] computeHomographyMatrix: Function called.");
             if (srcPts.length !== 4 || dstPtsNorm.length !== 4) {
-                console.error("computeHomographyMatrix: Requires 4 source and 4 destination points.");
+                console.error("[DEBUG] computeHomographyMatrix: Requires 4 source and 4 destination points.");
                 return null;
             }
-            console.warn("computeHomographyMatrix is a placeholder. It does NOT compute a true perspective transform.");
-            console.log("Source Points (Pixels):", srcPts);
-            console.log("Destination Points (Normalized):", dstPtsNorm);
-            // This placeholder returns an identity matrix, meaning no actual perspective correction will occur.
-            // A real implementation would involve:
-            // 1. Setting up an 8x8 matrix A and an 8x1 vector b from the point correspondences.
-            //    For each point i:
-            //    x_src_i, y_src_i -> x_dst_norm_i, y_dst_norm_i
-            //    A_row1 = [x_src_i, y_src_i, 1, 0,       0,       0, -x_src_i*x_dst_norm_i, -y_src_i*x_dst_norm_i]
-            //    b_row1 = [x_dst_norm_i]
-            //    A_row2 = [0,       0,       0, x_src_i, y_src_i, 1, -x_src_i*y_dst_norm_i, -y_src_i*y_dst_norm_i]
-            //    b_row2 = [y_dst_norm_i]
-            // 2. Solving Ah = b for h (where h is [h11,h12,h13,h21,h22,h23,h31,h32]).
-            // 3. The matrix is then [h11,h12,h13, h21,h22,h23, h31,h32,1] (h33 is normalized to 1).
-            return [
-                1, 0, 0, // H11, H12, H13
-                0, 1, 0, // H21, H22, H23
-                0, 0, 1  // H31, H32, H33 (H33 normalized to 1)
+            // This is a placeholder - true homography is complex.
+            console.warn("[DEBUG] computeHomographyMatrix: This is a placeholder and does NOT compute a true perspective transform.");
+            console.log("[DEBUG] computeHomographyMatrix: Source Points (Pixels on poseCanvas):", JSON.parse(JSON.stringify(srcPts)));
+            console.log("[DEBUG] computeHomographyMatrix: Destination Points (Normalized 0-1 for target court):", JSON.parse(JSON.stringify(dstPtsNorm)));
+            
+            // Placeholder returns an identity matrix.
+            const identityMatrix = [
+                1, 0, 0, 
+                0, 1, 0, 
+                0, 0, 1  
             ];
+            console.log("[DEBUG] computeHomographyMatrix: Returning placeholder (identity) matrix:", identityMatrix);
+            return identityMatrix;
         }
 
         /**
          * Applies homography transformation to a point.
-         * @param {{x:number, y:number}} pointNormSrc - Original point from MediaPipe (normalized 0-1, relative to poseCanvas).
-         * @param {Array<number>} H - Homography matrix (9 elements, row-major).
-         * @param {number} srcCanvasWidth - Width of the source canvas (poseCanvas).
-         * @param {number} srcCanvasHeight - Height of the source canvas (poseCanvas).
-         * @returns {{x:number, y:number}} Transformed point (normalized 0-1, relative to target court).
          */
         function applyHomography(pointNormSrc, H, srcCanvasWidth, srcCanvasHeight) {
+            // console.log("[DEBUG] applyHomography: Called with pointNormSrc:", pointNormSrc, "H:", H, `srcSize: ${srcCanvasWidth}x${srcCanvasHeight}`);
             if (!H || H.length !== 9) {
-                // If no valid matrix, return the original normalized point (no transformation)
+                // console.warn("[DEBUG] applyHomography: Invalid or no homography matrix. Returning original point.");
                 return pointNormSrc;
             }
 
-            // Convert normalized source point to pixel coordinates on source canvas
             const srcXpx = pointNormSrc.x * srcCanvasWidth;
             const srcYpx = pointNormSrc.y * srcCanvasHeight;
 
-            const denominator = H[6] * srcXpx + H[7] * srcYpx + H[8]; // H[8] is h33, usually 1
+            const denominator = H[6] * srcXpx + H[7] * srcYpx + H[8]; 
 
-            if (Math.abs(denominator) < 1e-7) { // Avoid division by zero or very small number
-                console.warn("Denominator is close to zero in homography. Returning original normalized point.");
-                return pointNormSrc; // Or handle as an invalid point
+            if (Math.abs(denominator) < 1e-7) { 
+                console.warn("[DEBUG] applyHomography: Denominator is close to zero. Returning original normalized point to avoid division issues.");
+                return pointNormSrc; 
             }
 
-            // Apply transformation to get destination coordinates (these are normalized for the target court)
             const dstNormX = (H[0] * srcXpx + H[1] * srcYpx + H[2]) / denominator;
             const dstNormY = (H[3] * srcXpx + H[4] * srcYpx + H[5]) / denominator;
+            // console.log(`[DEBUG] applyHomography: Transformed point from (${pointNormSrc.x.toFixed(3)}, ${pointNormSrc.y.toFixed(3)}) to (${dstNormX.toFixed(3)}, ${dstNormY.toFixed(3)})`);
             
             return { x: dstNormX, y: dstNormY };
         }
         
         /**
          * Corrects all ankle positions using the homography matrix.
-         * @param {Array<Object>} positions - Array of ankle position data.
-         * @param {Array<number>} H - Homography matrix.
-         * @param {number} sourceWidth - Width of the source canvas (poseCanvas).
-         * @param {number} sourceHeight - Height of the source canvas (poseCanvas).
-         * @returns {Array<Object>} Array of corrected ankle positions.
          */
         function correctAnklePositions(positions, H, sourceWidth, sourceHeight) {
-            if (!H) return positions; // Return original if no homography matrix
+            console.log(`[DEBUG] correctAnklePositions: Correcting ${positions.length} positions with H:`, H);
+            if (!H) {
+                console.warn("[DEBUG] correctAnklePositions: No homography matrix provided. Returning original positions.");
+                return positions;
+            }
             
-            return positions.map(p => {
-                const correctedP = { ...p }; // Shallow copy time and other potential fields
+            const corrected = positions.map(p => {
+                const correctedP = { ...p }; 
                 if (p.leftAnkle) {
+                    const originalLeft = {...p.leftAnkle};
                     correctedP.leftAnkle = { 
                         ...p.leftAnkle, 
                         ...applyHomography(p.leftAnkle, H, sourceWidth, sourceHeight) 
                     };
+                    // if (p.time < 0.5) console.log(`[DEBUG] correctAnklePositions (Left Sample): Time ${p.time.toFixed(2)} Original: (${originalLeft.x.toFixed(3)},${originalLeft.y.toFixed(3)}) -> Corrected: (${correctedP.leftAnkle.x.toFixed(3)},${correctedP.leftAnkle.y.toFixed(3)})`);
                 }
                 if (p.rightAnkle) {
+                     const originalRight = {...p.rightAnkle};
                     correctedP.rightAnkle = { 
                         ...p.rightAnkle, 
                         ...applyHomography(p.rightAnkle, H, sourceWidth, sourceHeight) 
                     };
+                    // if (p.time < 0.5) console.log(`[DEBUG] correctAnklePositions (Right Sample): Time ${p.time.toFixed(2)} Original: (${originalRight.x.toFixed(3)},${originalRight.y.toFixed(3)}) -> Corrected: (${correctedP.rightAnkle.x.toFixed(3)},${correctedP.rightAnkle.y.toFixed(3)})`);
                 }
                 return correctedP;
             });
+            console.log("[DEBUG] correctAnklePositions: Correction complete for all positions.");
+            if(corrected.length > 0) console.log("[DEBUG] correctAnklePositions: Sample corrected position [0]:", JSON.parse(JSON.stringify(corrected[0])));
+            return corrected;
         }
 
     </script>
