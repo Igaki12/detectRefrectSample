@@ -48,7 +48,6 @@
             text-shadow: 1px 1px 2px rgba(0, 0, 0, 0.1);
         }
         
-        /* *** ADDED *** トリミング用オーバーレイのスタイル */
         #cropOverlayCanvas {
             touch-action: none; /* スマホでの操作を考慮 */
             cursor: grab;
@@ -74,18 +73,15 @@
               hover:file:bg-orange-200 disabled:opacity-50 transition-colors" disabled>
             <p id="loadingTxt" class="text-sm text-gray-500 mt-2">AIモデルを読み込んでいます... 初回は数秒～数十秒かかることがあります。</p>
             
-            <!-- *** MODIFIED *** トリミングUI用にコンテナを追加 -->
             <div id="videoContainer" class="mt-4 grid grid-cols-1 md:grid-cols-2 gap-4 items-start">
                 <div>
                     <h3 class="text-lg font-medium text-gray-700 mb-1">オリジナル動画</h3>
                     <video id="video" controls class="w-full rounded-md shadow-md aspect-video hidden bg-gray-200"></video>
                 </div>
-                <!-- *** MODIFIED *** トリミングオーバーレイを重ねるためのコンテナ -->
                 <div class="relative">
                     <h3 class="text-lg font-medium text-gray-700 mb-1">姿勢推定オーバーレイ</h3>
                     <div id="poseCanvasContainer" class="w-full aspect-video">
                         <canvas id="poseCanvas" class="w-full rounded-md shadow-md aspect-video hidden bg-gray-200"></canvas>
-                        <!-- *** ADDED *** トリミング用のオーバーレイCanvas -->
                         <canvas id="cropOverlayCanvas" class="absolute top-0 left-0 w-full h-full hidden"></canvas>
                     </div>
                 </div>
@@ -102,9 +98,8 @@
 
         <!-- Section 3: Movement Analysis -->
         <section id="analysisSection" class="mb-6 p-4 border border-orange-200 rounded-lg hidden bg-white/50">
-            <h2 class="text-2xl font-semibold mb-3 text-orange-500">3. 移動分析結果</h2>
+            <h2 class="text-2xl font-semibold mb-3 text-orange-500">3. 移動・ショット分析結果</h2>
             
-            <!-- *** ADDED *** トリミングと補正のためのコントロール -->
             <div id="correctionControls" class="mb-4 p-4 border border-indigo-200 rounded-lg bg-white/50">
                 <h3 class="text-xl font-semibold mb-2 text-indigo-500">座標の補正</h3>
                 <p class="text-sm text-gray-600 mb-3">動画内のコートの歪みを補正し、より正確な軌跡を表示します。</p>
@@ -114,7 +109,7 @@
                 <p id="cropInstructions" class="text-sm text-indigo-700 mt-2 hidden">コートの四隅をドラッグして調整してください。</p>
             </div>
 
-            <button id="analyzeButton" class="bg-blue-500 hover:bg-blue-600 text-white font-bold py-3 px-6 rounded-lg shadow-md w-full mb-4 transition-transform hover:scale-105">移動分析を開始・更新</button>
+            <button id="analyzeButton" class="bg-blue-500 hover:bg-blue-600 text-white font-bold py-3 px-6 rounded-lg shadow-md w-full mb-4 transition-transform hover:scale-105">分析を開始・更新</button>
 
             <div id="visualizationControls" class="mt-4 hidden">
                 <div class="mb-4">
@@ -127,6 +122,12 @@
                     </div>
                 </div>
 
+                <!-- *** ADDED *** Shot shortcut buttons container -->
+                <div id="shotButtonsContainer" class="mt-2 mb-4 flex flex-wrap items-center gap-2">
+                    <!-- Buttons will be inserted here by JavaScript -->
+                </div>
+
+
                 <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mt-4">
                     <div>
                         <h3 class="text-xl font-semibold mb-2 text-orange-500">移動軌跡</h3>
@@ -138,6 +139,13 @@
                         <p class="text-xs text-gray-500 mb-1">滞在頻度が高いほど赤く表示</p>
                         <canvas id="heatmapCanvas" class="w-full aspect-[1340/610] analysis-canvas rounded-md shadow"></canvas>
                     </div>
+                </div>
+                
+                <!-- *** ADDED *** Wrist velocity graph -->
+                <div class="mt-6">
+                    <h3 class="text-xl font-semibold mb-2 text-orange-500">ショット分析 (右手首の速度)</h3>
+                    <p class="text-xs text-gray-500 mb-1">速度が閾値（赤点線）を超えた時間帯（オレンジ背景）をショットとして検出します。</p>
+                    <canvas id="wristVelocityCanvas" class="w-full h-48 analysis-canvas rounded-md shadow"></canvas>
                 </div>
             </div>
         </section>
@@ -168,7 +176,7 @@
         const trajectoryCanvas = document.getElementById('trajectoryCanvas');
         const heatmapCanvas = document.getElementById('heatmapCanvas');
 
-        // *** ADDED *** DOM Elements for Cropping/Correction
+        // *** ADDED *** DOM Elements for Cropping/Correction & Shot Analysis
         const correctionControls = document.getElementById('correctionControls');
         const startCropButton = document.getElementById('startCropButton');
         const applyCorrectionButton = document.getElementById('applyCorrectionButton');
@@ -176,12 +184,15 @@
         const cropInstructions = document.getElementById('cropInstructions');
         const cropOverlayCanvas = document.getElementById('cropOverlayCanvas');
         const poseCanvasContainer = document.getElementById('poseCanvasContainer');
+        const wristVelocityCanvas = document.getElementById('wristVelocityCanvas');
+        const shotButtonsContainer = document.getElementById('shotButtonsContainer');
 
         // Canvas Contexts
         let ctxPose = poseCanvas.getContext('2d');
         let ctxTrajectory = trajectoryCanvas.getContext('2d');
         let ctxHeatmap = heatmapCanvas.getContext('2d');
-        let ctxCropOverlay = cropOverlayCanvas.getContext('2d'); // *** ADDED ***
+        let ctxCropOverlay = cropOverlayCanvas.getContext('2d');
+        let ctxWristVelocity = wristVelocityCanvas.getContext('2d'); // *** ADDED ***
 
         // MediaRecorder & PoseLandmarker
         let mediaRecorder;
@@ -191,31 +202,30 @@
         let runningMode = 'VIDEO';
         let lastVideoTime = -1;
         let anklePositions = []; 
+        let wristPositions = []; // *** ADDED ***
         let stream = null; 
 
         // Analysis & Correction State
         const HEATMAP_GRID_SIZE = 25;
         let videoDuration = 0;
-        
-        // *** ADDED *** State for Cropping and Correction
-        let cropPoints = []; // 4 points for the trapezoid: tl, tr, br, bl
+        let cropPoints = [];
         let correctedAnklePositions = [];
+        let correctedWristPositions = []; // *** ADDED ***
         let homographyMatrix = null;
         let isCorrectionApplied = false;
         let isCroppingMode = false;
         let isDragging = false;
         let draggedPointIndex = -1;
-        // const CROP_HANDLE_RADIUS = 10;  // Radius for draggable points ←小さいので大きくする。
-        const CROP_HANDLE_RADIUS = 50;
+        const CROP_HANDLE_RADIUS = 15;
         
         // Badminton court dimensions (for aspect ratio)
         const COURT_WIDTH = 610;
         const COURT_LENGTH = 1340;
+        
+        // *** ADDED *** Shot Analysis State
+        let shotTimes = [];
+        const SHOT_VELOCITY_THRESHOLD = 0.3; // 閾値 (正規化速度)。動画やプレイスタイルに応じて要調整
 
-
-        /**
-         * Initialize PoseLandmarker
-         */
         async function initPoseLandmarker() {
             try {
                 const vision = await FilesetResolver.forVisionTasks(
@@ -240,9 +250,6 @@
 
         initPoseLandmarker();
 
-        /**
-         * Handle file input change
-         */
         fileInput.addEventListener('change', (event) => {
             const file = event.target.files[0];
             if (!file) return;
@@ -254,23 +261,20 @@
             
             video.onloadedmetadata = () => {
                 videoDuration = video.duration;
-                
                 poseCanvas.width = video.videoWidth;
                 poseCanvas.height = video.videoHeight;
-                // *** ADDED *** Set overlay canvas dimensions
                 cropOverlayCanvas.width = video.videoWidth;
                 cropOverlayCanvas.height = video.videoHeight;
-
-                // *** MODIFIED *** Set analysis canvas dimensions based on court ratio
                 [trajectoryCanvas, heatmapCanvas].forEach(cvs => {
-                    cvs.width = COURT_LENGTH; // Use a fixed size for corrected view
+                    cvs.width = COURT_LENGTH;
                     cvs.height = COURT_WIDTH;
                 });
+                // *** ADDED *** Set wrist velocity canvas size
+                wristVelocityCanvas.width = wristVelocityCanvas.clientWidth;
+                wristVelocityCanvas.height = wristVelocityCanvas.clientHeight;
                 
                 drawingUtilsPose = new DrawingUtils(ctxPose);
                 startButton.disabled = false;
-                
-                // *** MODIFIED *** Reset all analysis and correction states
                 resetAllAnalysis(); 
                 loadingTxt.textContent = "動画の準備ができました。録画を開始できます。";
             };
@@ -280,25 +284,27 @@
             }
         });
         
-        // *** ADDED *** Function to reset analysis and correction states
         function resetAllAnalysis() {
             analysisSection.classList.add('hidden');
             visualizationControls.classList.add('hidden');
             correctionControls.style.display = 'none';
             stopCroppingMode();
             anklePositions = [];
+            wristPositions = []; // *** ADDED ***
             correctedAnklePositions = [];
+            correctedWristPositions = []; // *** ADDED ***
+            shotTimes = []; // *** ADDED ***
             recordedChunks = [];
             isCorrectionApplied = false;
             homographyMatrix = null;
             downloadLink.classList.add('hidden');
             analyzeButton.disabled = true;
+
+            // *** ADDED *** Clear analysis UI
+            shotButtonsContainer.innerHTML = '';
+            ctxWristVelocity.clearRect(0, 0, wristVelocityCanvas.width, wristVelocityCanvas.height);
         }
 
-
-        /**
-         * Main drawing loop for pose estimation
-         */
         async function drawFrame() {
             if (!video || video.paused || video.ended || video.readyState < 2) {
                 requestAnimationFrame(drawFrame);
@@ -320,6 +326,7 @@
                             drawingUtilsPose.drawLandmarks(landmarks, { color: '#FFAB91', radius: 3 });
                         }
                         if (mediaRecorder && mediaRecorder.state === "recording") {
+                            // Record ankle positions
                             const leftAnkle = landmarks[27];
                             const rightAnkle = landmarks[28];
                             if (leftAnkle && rightAnkle) {
@@ -329,11 +336,20 @@
                                     rightAnkle: { x: rightAnkle.x, y: rightAnkle.y, visibility: rightAnkle.visibility }
                                 });
                             }
+                            // *** ADDED *** Record wrist positions
+                            const leftWrist = landmarks[15];
+                            const rightWrist = landmarks[16];
+                            if(leftWrist && rightWrist) {
+                                wristPositions.push({
+                                    time: video.currentTime,
+                                    leftWrist: { x: leftWrist.x, y: leftWrist.y, visibility: leftWrist.visibility },
+                                    rightWrist: { x: rightWrist.x, y: rightWrist.y, visibility: rightWrist.visibility }
+                                });
+                            }
                         }
                     }
                 });
             }
-            // *** ADDED *** Redraw crop overlay if in cropping mode
             if (isCroppingMode) {
                 drawCropOverlay();
             }
@@ -351,10 +367,6 @@
             }
         });
 
-
-        /**
-         * Start/Stop Recording Logic (largely unchanged, but with UI updates in onstop)
-         */
         startButton.addEventListener('click', () => {
             if (poseCanvas.captureStream) {
                 stream = poseCanvas.captureStream(30);
@@ -365,7 +377,7 @@
             }
 
             video.play();
-            resetAllAnalysis(); // Reset previous analysis before starting a new one
+            resetAllAnalysis();
             
             try {
                 mediaRecorder = new MediaRecorder(stream, { mimeType: 'video/webm; codecs=vp9' });
@@ -385,21 +397,20 @@
                 downloadLink.href = url;
                 downloadLink.classList.remove('hidden');
                 
-                // *** MODIFIED *** Show analysis and correction sections
                 analysisSection.classList.remove('hidden');
                 correctionControls.style.display = 'block'; 
                 analyzeButton.disabled = false;
                 visualizationControls.classList.add('hidden'); 
 
-                if (anklePositions.length > 0) {
-                    const maxTime = anklePositions[anklePositions.length - 1].time;
+                if (anklePositions.length > 0 || wristPositions.length > 0) {
+                    const maxTime = video.duration;
                     timeSlider.max = maxTime.toFixed(1);
                     timeSlider.value = maxTime.toFixed(1);
                     sliderMaxTime.textContent = `${maxTime.toFixed(1)}s`;
                     sliderCurrentTime.textContent = `${maxTime.toFixed(1)}s`;
                 }
                 sliderMinTime.textContent = "0.0s";
-                loadingTxt.textContent = "録画が完了しました。「移動分析を開始」または「コートに合わせてトリミング」を行ってください。";
+                loadingTxt.textContent = "録画が完了しました。「分析を開始」または「コートに合わせてトリミング」を行ってください。";
             };
             
             mediaRecorder.start();
@@ -421,18 +432,28 @@
         }
         stopButton.addEventListener('click', stopRecording);
 
+        // --- Analysis and Correction Logic ---
 
-        /**
-         * Analysis and Correction Logic
-         */
         analyzeButton.addEventListener('click', () => {
-            if (anklePositions.length === 0) {
+            if (anklePositions.length === 0 && wristPositions.length === 0) {
                 loadingTxt.textContent = "情報: 分析データがありません。先に動画を録画してください。";
                 return;
             }
             visualizationControls.classList.remove('hidden');
+            
+            // *** ADDED *** Perform shot analysis
+            const wristDataToAnalyze = isCorrectionApplied ? correctedWristPositions : wristPositions;
+            if (wristDataToAnalyze.length > 1) {
+                const velocityData = calculateWristVelocity(wristDataToAnalyze, isCorrectionApplied);
+                shotTimes = detectShots(velocityData, SHOT_VELOCITY_THRESHOLD);
+                createShotButtons(shotTimes);
+            } else {
+                shotTimes = [];
+                createShotButtons([]);
+            }
+
             drawAnalysis(parseFloat(timeSlider.value));
-            loadingTxt.textContent = "移動分析結果を表示しています。";
+            loadingTxt.textContent = "分析結果を表示しています。";
         });
         
         timeSlider.addEventListener('input', () => {
@@ -444,10 +465,10 @@
         });
         
         function drawAnalysis(currentTime) {
-            const positionsToDraw = isCorrectionApplied ? correctedAnklePositions : anklePositions;
-            const filteredPositions = positionsToDraw.filter(p => p.time <= currentTime);
+            // Draw Trajectory and Heatmap
+            const anklePositionsToDraw = isCorrectionApplied ? correctedAnklePositions : anklePositions;
+            const filteredAnklePositions = anklePositionsToDraw.filter(p => p.time <= currentTime);
             
-            // Clear and draw background on canvases
             [trajectoryCanvas, heatmapCanvas].forEach(canvas => {
                 const ctx = canvas.getContext('2d');
                 ctx.clearRect(0, 0, canvas.width, canvas.height);
@@ -456,79 +477,47 @@
                 }
             });
 
-            if (filteredPositions.length > 0) {
-                drawTrajectory(filteredPositions, isCorrectionApplied, trajectoryCanvas);
-                drawHeatmap(filteredPositions, isCorrectionApplied, heatmapCanvas);
-                loadingTxt.textContent = isCorrectionApplied ? "補正後の分析結果を表示中..." : "移動分析結果を表示中...";
-            } else {
-                 loadingTxt.textContent = "情報: 選択した時間範囲に座標データがありません。";
+            if (filteredAnklePositions.length > 0) {
+                drawTrajectory(filteredAnklePositions, isCorrectionApplied, trajectoryCanvas);
+                drawHeatmap(filteredAnklePositions, isCorrectionApplied, heatmapCanvas);
+            }
+            
+            // *** ADDED *** Draw Wrist Velocity Graph
+            const wristPositionsToAnalyze = isCorrectionApplied ? correctedWristPositions : wristPositions;
+            if (wristPositionsToAnalyze.length > 1) {
+                console.log("wristPositionsToAnalyze:");
+                console.log(wristPositionsToAnalyze);
+                const velocityData = calculateWristVelocity(wristPositionsToAnalyze, isCorrectionApplied);
+                console.log("Wrist Velocity Data:");
+                console.log(velocityData);
+                drawWristVelocityGraph(velocityData, shotTimes, currentTime);
             }
         }
         
-        // *** ADDED *** Function to draw a badminton court
         function drawBadmintonCourt(ctx) {
             const w = ctx.canvas.width;
             const h = ctx.canvas.height;
-            
-            ctx.fillStyle = '#f0fdf4'; // green-50
+            ctx.fillStyle = '#f0fdf4';
             ctx.fillRect(0, 0, w, h);
-            
-            ctx.strokeStyle = '#4b5563'; // gray-600
-            ctx.lineWidth = w / 200; // responsive line width
-
-            // Outer lines
+            ctx.strokeStyle = '#4b5563';
+            ctx.lineWidth = w / 200;
             ctx.strokeRect(0, 0, w, h);
-            // Net line
-            ctx.beginPath();
-            ctx.moveTo(w / 2, 0);
-            ctx.lineTo(w / 2, h);
-            ctx.stroke();
-            // Center line
-            ctx.beginPath();
-            ctx.moveTo(w*0.05, h/2);
-            ctx.lineTo(w*0.95, h/2);
-            ctx.stroke();
-            // Service lines
-            ctx.beginPath();
-            ctx.moveTo(w*0.05, 0); ctx.lineTo(w*0.05, h); // left
-            ctx.moveTo(w*0.95, 0); ctx.lineTo(w*0.95, h); // right
-            ctx.moveTo(w/2 + w*0.3, 0); ctx.lineTo(w/2 + w*0.3, h); // right service
-            ctx.moveTo(w/2 - w*0.3, 0); ctx.lineTo(w/2 - w*0.3, h); // left service
-            ctx.stroke();
+            ctx.beginPath(); ctx.moveTo(w / 2, 0); ctx.lineTo(w / 2, h); ctx.stroke();
+            ctx.beginPath(); ctx.moveTo(w*0.05, h/2); ctx.lineTo(w*0.95, h/2); ctx.stroke();
+            ctx.beginPath(); ctx.moveTo(w*0.05, 0); ctx.lineTo(w*0.05, h); ctx.moveTo(w*0.95, 0); ctx.lineTo(w*0.95, h); ctx.moveTo(w/2 + w*0.3, 0); ctx.lineTo(w/2 + w*0.3, h); ctx.moveTo(w/2 - w*0.3, 0); ctx.lineTo(w/2 - w*0.3, h); ctx.stroke();
         }
 
-
-        // *** MODIFIED *** Draw functions to handle corrected coordinates
         function drawTrajectory(positions, isCorrected, canvas) {
             const ctx = canvas.getContext('2d');
             ctx.lineWidth = 2;
-            
-            const getCoords = (pos) => isCorrected 
-                ? { x: pos.x, y: pos.y } 
-                : { x: pos.x * canvas.width, y: pos.y * canvas.height };
-
-            // Left Ankle
+            const getCoords = (pos) => isCorrected ? { x: pos.x, y: pos.y } : { x: pos.x * canvas.width, y: pos.y * canvas.height };
             ctx.strokeStyle = 'rgba(59, 130, 246, 0.8)';
             ctx.beginPath();
-            positions.forEach((p, i) => {
-                if (p.leftAnkle) {
-                    const {x, y} = getCoords(p.leftAnkle);
-                    if (i === 0 || !positions[i-1].leftAnkle) ctx.moveTo(x, y);
-                    else ctx.lineTo(x, y);
-                }
-            });
+            positions.forEach((p, i) => { if (p.leftAnkle) { const {x, y} = getCoords(p.leftAnkle); if (i === 0 || !positions[i-1].leftAnkle) ctx.moveTo(x, y); else ctx.lineTo(x, y); }});
             ctx.stroke();
-
-            // Right Ankle
             ctx.strokeStyle = 'rgba(239, 68, 68, 0.8)';
             ctx.beginPath();
-            positions.forEach((p, i) => {
-                if (p.rightAnkle) {
-                    const {x, y} = getCoords(p.rightAnkle);
-                    if (i === 0 || !positions[i-1].rightAnkle) ctx.moveTo(x, y);
-                    else ctx.lineTo(x, y);
-                }
-            });
+            positions.forEach((p, i) => { if (p.rightAnkle) { const {x, y} = getCoords(p.rightAnkle); if (i === 0 || !positions[i-1].rightAnkle) ctx.moveTo(x, y); else ctx.lineTo(x, y); }});
             ctx.stroke();
         }
 
@@ -538,41 +527,143 @@
             const gridH = canvas.height / HEATMAP_GRID_SIZE;
             const heatmapData = Array(HEATMAP_GRID_SIZE).fill(null).map(() => Array(HEATMAP_GRID_SIZE).fill(0));
             let maxHits = 0;
-            
-            const getCoords = (pos) => isCorrected 
-                ? { x: pos.x, y: pos.y } 
-                : { x: pos.x * canvas.width, y: pos.y * canvas.height };
-
-            positions.forEach(p => {
-                [p.leftAnkle, p.rightAnkle].forEach(ankle => {
-                    if (ankle) {
-                        const {x, y} = getCoords(ankle);
-                        const gridX = Math.floor(x / gridW);
-                        const gridY = Math.floor(y / gridH);
-                        if (gridX >= 0 && gridX < HEATMAP_GRID_SIZE && gridY >= 0 && gridY < HEATMAP_GRID_SIZE) {
-                            heatmapData[gridY][gridX]++;
-                            if (heatmapData[gridY][gridX] > maxHits) maxHits = heatmapData[gridY][gridX];
-                        }
-                    }
-                });
-            });
-
+            const getCoords = (pos) => isCorrected ? { x: pos.x, y: pos.y } : { x: pos.x * canvas.width, y: pos.y * canvas.height };
+            positions.forEach(p => {[p.leftAnkle, p.rightAnkle].forEach(ankle => { if (ankle) { const {x, y} = getCoords(ankle); const gridX = Math.floor(x / gridW); const gridY = Math.floor(y / gridH); if (gridX >= 0 && gridX < HEATMAP_GRID_SIZE && gridY >= 0 && gridY < HEATMAP_GRID_SIZE) { heatmapData[gridY][gridX]++; if (heatmapData[gridY][gridX] > maxHits) maxHits = heatmapData[gridY][gridX];}}});});
             if (maxHits === 0) return;
-
-            for (let y = 0; y < HEATMAP_GRID_SIZE; y++) {
-                for (let x = 0; x < HEATMAP_GRID_SIZE; x++) {
-                    if (heatmapData[y][x] > 0) {
-                        const intensity = heatmapData[y][x] / maxHits;
-                        const r = 255;
-                        const g = Math.floor(255 * (1 - intensity));
-                        ctx.fillStyle = `rgba(${r}, ${g}, 0, ${Math.max(0.1, intensity * 0.7)})`;
-                        ctx.fillRect(x * gridW, y * gridH, gridW, gridH);
-                    }
-                }
-            }
+            for (let y = 0; y < HEATMAP_GRID_SIZE; y++) { for (let x = 0; x < HEATMAP_GRID_SIZE; x++) { if (heatmapData[y][x] > 0) { const intensity = heatmapData[y][x] / maxHits; const r = 255; const g = Math.floor(255 * (1 - intensity)); ctx.fillStyle = `rgba(${r}, ${g}, 0, ${Math.max(0.1, intensity * 0.7)})`; ctx.fillRect(x * gridW, y * gridH, gridW, gridH);}}}
         }
         
-        // --- *** ADDED *** Cropping and Correction Functions ---
+        // --- *** ADDED *** Shot Analysis and Visualization Functions ---
+
+        function calculateWristVelocity(positions, isCorrected) {
+            const velocities = [];
+            // Use right wrist for analysis, assuming right-handed player
+            for (let i = 1; i < positions.length; i++) {
+                const p1 = positions[i-1];
+                const p2 = positions[i];
+
+                //if (p1.rightWrist && p2.rightWrist && p1.time < p2.time && p2.rightWrist.visibility > 0.5) {
+                if (p1.rightWrist && p2.rightWrist && p1.time < p2.time) {
+                    const dt = p2.time - p1.time;
+                    if (dt === 0) continue;
+
+                    const canvasWidth = isCorrected ? trajectoryCanvas.width : poseCanvas.width;
+                    const p1_coords = isCorrected ? p1.rightWrist : { x: p1.rightWrist.x * poseCanvas.width, y: p1.rightWrist.y * poseCanvas.height };
+                    const p2_coords = isCorrected ? p2.rightWrist : { x: p2.rightWrist.x * poseCanvas.width, y: p2.rightWrist.y * poseCanvas.height };
+                    
+                    const dx = p2_coords.x - p1_coords.x;
+                    const dy = p2_coords.y - p1_coords.y;
+                    
+                    const distance = Math.sqrt(dx*dx + dy*dy);
+                    const velocity = (distance / canvasWidth) / dt; // Normalize by canvas width to get consistent speed unit
+                    
+                    velocities.push({ time: p2.time, velocity });
+                }
+            }
+            return velocities;
+        }
+
+        function detectShots(velocityData, threshold) {
+            const shots = [];
+            let inShot = false;
+            let currentShot = null;
+
+            velocityData.forEach(data => {
+                if (data.velocity > threshold && !inShot) {
+                    inShot = true;
+                    currentShot = { start: data.time, peakTime: data.time, maxVelocity: data.velocity };
+                } else if (inShot) {
+                    if (data.velocity > currentShot.maxVelocity) {
+                        currentShot.maxVelocity = data.velocity;
+                        currentShot.peakTime = data.time;
+                    }
+                    if (data.velocity < threshold) {
+                        inShot = false;
+                        currentShot.end = data.time;
+                        // Avoid detecting very short noise spikes as shots
+                        if (currentShot.end - currentShot.start > 0.1) {
+                            shots.push(currentShot);
+                        }
+                        currentShot = null;
+                    }
+                }
+            });
+
+            if (inShot && currentShot) {
+                currentShot.end = velocityData[velocityData.length - 1].time;
+                shots.push(currentShot);
+            }
+            return shots;
+        }
+
+        function drawWristVelocityGraph(velocityData, shots, currentTime) {
+            const canvas = wristVelocityCanvas;
+            const ctx = ctxWristVelocity;
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            if (velocityData.length === 0) return;
+
+            const maxTime = videoDuration;
+            const maxVelocity = Math.max(...velocityData.map(v => v.velocity), SHOT_VELOCITY_THRESHOLD * 1.2);
+            console.log("Max Velocity:", maxVelocity);
+            // Max Velocity: 11.47338420635776
+            const padding = { top: 20, right: 30, bottom: 30, left: 40 };
+            const plotWidth = canvas.width - padding.left - padding.right;
+            const plotHeight = canvas.height - padding.top - padding.bottom;
+            const timeToX = (time) => padding.left + (time / maxTime) * plotWidth;
+            const velToY = (vel) => padding.top + plotHeight - (vel / maxVelocity) * plotHeight;
+
+            // Draw axes and labels
+            ctx.strokeStyle = '#9ca3af'; ctx.fillStyle = '#4b5563'; ctx.lineWidth = 4; ctx.font = '10px sans-serif';
+            ctx.beginPath(); ctx.moveTo(padding.left, padding.top); ctx.lineTo(padding.left, padding.top + plotHeight); ctx.stroke();
+            ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
+            for (let i = 0; i <= 4; i++) { const vel = (maxVelocity / 4) * i; ctx.fillText(vel.toFixed(1), padding.left - 5, velToY(vel)); }
+            ctx.beginPath(); ctx.moveTo(padding.left, padding.top + plotHeight); ctx.lineTo(padding.left + plotWidth, padding.top + plotHeight); ctx.stroke();
+            ctx.textAlign = 'center'; ctx.textBaseline = 'top';
+            for (let i = 0; i <= 5; i++) { const time = (maxTime / 5) * i; ctx.fillText(`${time.toFixed(1)}s`, timeToX(time), padding.top + plotHeight + 5); }
+            
+            // Highlight shot areas
+            ctx.fillStyle = 'rgba(251, 146, 60, 0.2)';
+            shots.forEach(shot => { ctx.fillRect(timeToX(shot.start), padding.top, timeToX(shot.end) - timeToX(shot.start), plotHeight); });
+
+            // Draw velocity graph
+            ctx.strokeStyle = '#3b82f6'; ctx.lineWidth = 2; ctx.beginPath();
+            velocityData.forEach((d, i) => { const x = timeToX(d.time); const y = velToY(d.velocity); if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y); });
+            ctx.stroke();
+
+            // Draw threshold line
+            ctx.strokeStyle = '#ef4444'; ctx.setLineDash([5, 5]); ctx.lineWidth = 1; ctx.beginPath();
+            const thresholdY = velToY(SHOT_VELOCITY_THRESHOLD);
+            ctx.moveTo(padding.left, thresholdY); ctx.lineTo(padding.left + plotWidth, thresholdY); ctx.stroke();
+            ctx.setLineDash([]);
+
+            // Draw current time line
+            ctx.strokeStyle = '#fb923c'; ctx.lineWidth = 1.5; const currentX = timeToX(currentTime);
+            ctx.beginPath(); ctx.moveTo(currentX, padding.top); ctx.lineTo(currentX, padding.top + plotHeight); ctx.stroke();
+        }
+
+        function createShotButtons(shots) {
+            shotButtonsContainer.innerHTML = '';
+            if (shots.length === 0) {
+                shotButtonsContainer.innerHTML = `<span class="text-sm text-gray-600">検出されたショットはありません。</span>`;
+                return;
+            }
+            const title = document.createElement('span');
+            title.className = 'text-sm font-medium text-gray-700 mr-2 self-center';
+            title.textContent = 'ショット時点へ移動:';
+            shotButtonsContainer.appendChild(title);
+            shots.forEach((shot, index) => {
+                const button = document.createElement('button');
+                button.className = 'bg-orange-200 hover:bg-orange-300 text-orange-800 text-xs font-semibold py-1 px-2 rounded-full transition-colors';
+                button.textContent = `ショット ${index + 1} (${shot.peakTime.toFixed(1)}s)`;
+                button.onclick = () => {
+                    timeSlider.value = shot.peakTime;
+                    timeSlider.dispatchEvent(new Event('input'));
+                };
+                shotButtonsContainer.appendChild(button);
+            });
+        }
+        
+        // --- Cropping and Correction Functions (largely unchanged, but updated to handle wrist data) ---
 
         function startCroppingMode() {
             isCroppingMode = true;
@@ -580,137 +671,58 @@
             cropInstructions.classList.remove('hidden');
             applyCorrectionButton.classList.remove('hidden');
             resetCorrectionButton.classList.remove('hidden');
-            // Initialize crop points to corners with a margin
-            const w = cropOverlayCanvas.width;
-            const h = cropOverlayCanvas.height;
-            const marginX = w * 0.15;
-            const marginY = h * 0.15;
-            cropPoints = [
-                { x: marginX, y: marginY }, // Top-Left
-                { x: w - marginX, y: marginY }, // Top-Right
-                { x: w - marginX, y: h - marginY }, // Bottom-Right
-                { x: marginX, y: h - marginY }, // Bottom-Left
-            ];
+            const w = cropOverlayCanvas.width; const h = cropOverlayCanvas.height; const marginX = w * 0.15; const marginY = h * 0.15;
+            cropPoints = [{ x: marginX, y: marginY }, { x: w - marginX, y: marginY }, { x: w - marginX, y: h - marginY }, { x: marginX, y: h - marginY }];
             drawCropOverlay();
         }
         
         function stopCroppingMode() {
-             isCroppingMode = false;
-             isDragging = false;
-             draggedPointIndex = -1;
-             cropOverlayCanvas.classList.add('hidden');
-             cropInstructions.classList.add('hidden');
-             applyCorrectionButton.classList.add('hidden');
-             resetCorrectionButton.classList.add('hidden');
+             isCroppingMode = false; isDragging = false; draggedPointIndex = -1;
+             cropOverlayCanvas.classList.add('hidden'); cropInstructions.classList.add('hidden');
+             applyCorrectionButton.classList.add('hidden'); resetCorrectionButton.classList.add('hidden');
         }
 
-        startCropButton.addEventListener('click', () => {
-            if (isCroppingMode) {
-                stopCroppingMode();
-                startCropButton.textContent = "コートに合わせてトリミング";
-            } else {
-                startCroppingMode();
-                startCropButton.textContent = "調整をキャンセル";
-            }
-        });
+        startCropButton.addEventListener('click', () => { if (isCroppingMode) { stopCroppingMode(); startCropButton.textContent = "コートに合わせてトリミング"; } else { startCroppingMode(); startCropButton.textContent = "調整をキャンセル"; }});
 
         function drawCropOverlay() {
             if (!isCroppingMode) return;
-            const ctx = ctxCropOverlay;
-            ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
-
-            // Draw the trapezoid area
-            ctx.beginPath();
-            ctx.moveTo(cropPoints[0].x, cropPoints[0].y);
-            for (let i = 1; i < cropPoints.length; i++) {
-                ctx.lineTo(cropPoints[i].x, cropPoints[i].y);
-            }
-            ctx.closePath();
-            ctx.fillStyle = "rgba(59, 130, 246, 0.2)"; // blue-500 with opacity
-            ctx.fill();
-            ctx.strokeStyle = "rgba(37, 99, 235, 1)"; // blue-700
-            // ctx.lineWidth = 2; ← 細いので太く修正
-            ctx.lineWidth = 4; // Thicker line for better visibility
-            ctx.stroke();
-
-            // Draw draggable handles
-            cropPoints.forEach((p, i) => {
-                ctx.beginPath();
-                ctx.arc(p.x, p.y, CROP_HANDLE_RADIUS, 0, 2 * Math.PI);
-                ctx.fillStyle = (i === draggedPointIndex) ? "#dc2626" : "#2563eb"; // red-600 if active, blue-600 otherwise
-                ctx.fill();
-            });
+            const ctx = ctxCropOverlay; ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
+            ctx.beginPath(); ctx.moveTo(cropPoints[0].x, cropPoints[0].y);
+            for (let i = 1; i < cropPoints.length; i++) { ctx.lineTo(cropPoints[i].x, cropPoints[i].y); }
+            ctx.closePath(); ctx.fillStyle = "rgba(59, 130, 246, 0.2)"; ctx.fill();
+            ctx.strokeStyle = "rgba(37, 99, 235, 1)"; ctx.lineWidth = 4; ctx.stroke();
+            cropPoints.forEach((p, i) => { ctx.beginPath(); ctx.arc(p.x, p.y, CROP_HANDLE_RADIUS, 0, 2 * Math.PI); ctx.fillStyle = (i === draggedPointIndex) ? "#dc2626" : "#2563eb"; ctx.fill(); });
         }
         
-        // Mouse/Touch events for dragging handles
         cropOverlayCanvas.addEventListener('mousedown', (e) => {
             if (!isCroppingMode) return;
-            const rect = cropOverlayCanvas.getBoundingClientRect();
-            const mouseX = (e.clientX - rect.left) * (cropOverlayCanvas.width / rect.width);
-            const mouseY = (e.clientY - rect.top) * (cropOverlayCanvas.height / rect.height);
-            
-            draggedPointIndex = cropPoints.findIndex(p => {
-                const dist = Math.sqrt((p.x - mouseX)**2 + (p.y - mouseY)**2);
-                return dist < CROP_HANDLE_RADIUS;
-            });
-
-            if (draggedPointIndex !== -1) {
-                isDragging = true;
-                cropOverlayCanvas.style.cursor = 'grabbing';
-            }
+            const rect = cropOverlayCanvas.getBoundingClientRect(); const mouseX = (e.clientX - rect.left) * (cropOverlayCanvas.width / rect.width); const mouseY = (e.clientY - rect.top) * (cropOverlayCanvas.height / rect.height);
+            draggedPointIndex = cropPoints.findIndex(p => Math.sqrt((p.x - mouseX)**2 + (p.y - mouseY)**2) < CROP_HANDLE_RADIUS);
+            if (draggedPointIndex !== -1) { isDragging = true; cropOverlayCanvas.style.cursor = 'grabbing'; }
         });
-
         cropOverlayCanvas.addEventListener('mousemove', (e) => {
             if (!isCroppingMode) return;
-            const rect = cropOverlayCanvas.getBoundingClientRect();
-            const mouseX = (e.clientX - rect.left) * (cropOverlayCanvas.width / rect.width);
-            const mouseY = (e.clientY - rect.top) * (cropOverlayCanvas.height / rect.height);
-
-            if (isDragging && draggedPointIndex !== -1) {
-                cropPoints[draggedPointIndex] = { x: mouseX, y: mouseY };
-                drawCropOverlay();
-            } else {
-                 const onHandle = cropPoints.some(p => Math.sqrt((p.x - mouseX)**2 + (p.y - mouseY)**2) < CROP_HANDLE_RADIUS);
-                 cropOverlayCanvas.style.cursor = onHandle ? 'grab' : 'default';
-            }
+            const rect = cropOverlayCanvas.getBoundingClientRect(); const mouseX = (e.clientX - rect.left) * (cropOverlayCanvas.width / rect.width); const mouseY = (e.clientY - rect.top) * (cropOverlayCanvas.height / rect.height);
+            if (isDragging && draggedPointIndex !== -1) { cropPoints[draggedPointIndex] = { x: mouseX, y: mouseY }; drawCropOverlay(); } else { const onHandle = cropPoints.some(p => Math.sqrt((p.x - mouseX)**2 + (p.y - mouseY)**2) < CROP_HANDLE_RADIUS); cropOverlayCanvas.style.cursor = onHandle ? 'grab' : 'default'; }
         });
-
-        const stopDrag = () => {
-            if (isDragging) {
-                isDragging = false;
-                draggedPointIndex = -1;
-                cropOverlayCanvas.style.cursor = 'grab';
-            }
-        };
+        const stopDrag = () => { if (isDragging) { isDragging = false; draggedPointIndex = -1; cropOverlayCanvas.style.cursor = 'grab'; }};
         cropOverlayCanvas.addEventListener('mouseup', stopDrag);
         cropOverlayCanvas.addEventListener('mouseout', stopDrag);
 
-        // Correction application
         applyCorrectionButton.addEventListener('click', () => {
-            const srcPoints = cropPoints; // The user-defined trapezoid
-            // Destination is the full analysis canvas (a perfect rectangle)
-            const dstPoints = [
-                { x: 0, y: 0 },
-                { x: trajectoryCanvas.width, y: 0 },
-                { x: trajectoryCanvas.width, y: trajectoryCanvas.height },
-                { x: 0, y: trajectoryCanvas.height },
-            ];
-            
+            const srcPoints = cropPoints;
+            const dstPoints = [{ x: 0, y: 0 }, { x: trajectoryCanvas.width, y: 0 }, { x: trajectoryCanvas.width, y: trajectoryCanvas.height }, { x: 0, y: trajectoryCanvas.height }];
             try {
                 homographyMatrix = getHomographyMatrix(srcPoints, dstPoints);
-                correctedAnklePositions = applyHomographyToAllPoints(anklePositions, homographyMatrix, poseCanvas.width, poseCanvas.height);
-                isCorrectionApplied = true;
-                stopCroppingMode(); // Exit cropping UI
-                startCropButton.textContent = "コートに合わせてトリミング";
+                // *** UPDATED *** Apply to both ankle and wrist
+                correctedAnklePositions = applyHomographyToAllPoints(anklePositions, homographyMatrix, poseCanvas.width, poseCanvas.height, ['leftAnkle', 'rightAnkle']);
+                correctedWristPositions = applyHomographyToAllPoints(wristPositions, homographyMatrix, poseCanvas.width, poseCanvas.height, ['leftWrist', 'rightWrist']);
                 
-                // Redraw analysis with corrected data
-                if (!visualizationControls.classList.contains('hidden')) {
-                     drawAnalysis(parseFloat(timeSlider.value));
-                } else {
-                    analyzeButton.click();
-                }
+                isCorrectionApplied = true;
+                stopCroppingMode();
+                startCropButton.textContent = "コートに合わせてトリミング";
+                analyzeButton.click(); // Re-run analysis with corrected data
                 loadingTxt.textContent = "座標の補正が適用されました。";
-
             } catch (error) {
                 console.error("Failed to compute homography:", error);
                 loadingTxt.textContent = "エラー: 座標の補正に失敗しました。四隅が交差しないように指定してください。";
@@ -721,26 +733,24 @@
             isCorrectionApplied = false;
             homographyMatrix = null;
             correctedAnklePositions = [];
+            correctedWristPositions = []; // *** ADDED ***
             stopCroppingMode();
             startCropButton.textContent = "コートに合わせてトリミング";
-
-            if (!visualizationControls.classList.contains('hidden')) {
-                 drawAnalysis(parseFloat(timeSlider.value));
-            }
+            if (!visualizationControls.classList.contains('hidden')) { analyzeButton.click(); }
             loadingTxt.textContent = "座標の補正をリセットしました。";
         });
         
-        function applyHomographyToAllPoints(points, H, videoW, videoH) {
+        // *** UPDATED *** Generic function to apply homography
+        function applyHomographyToAllPoints(points, H, videoW, videoH, keyNames) {
             return points.map(p => {
                 const newP = { time: p.time };
-                if (p.leftAnkle) {
-                    const absCoords = { x: p.leftAnkle.x * videoW, y: p.leftAnkle.y * videoH };
-                    newP.leftAnkle = applyHomography(absCoords, H);
-                }
-                if (p.rightAnkle) {
-                    const absCoords = { x: p.rightAnkle.x * videoW, y: p.rightAnkle.y * videoH };
-                    newP.rightAnkle = applyHomography(absCoords, H);
-                }
+                keyNames.forEach(key => {
+                     if (p[key]) {
+                        const absCoords = { x: p[key].x * videoW, y: p[key].y * videoH };
+                        newP[key] = applyHomography(absCoords, H);
+                        newP[key].visibility = p[key].visibility;
+                    }
+                });
                 return newP;
             });
         }
@@ -753,85 +763,18 @@
             };
         }
 
-        /**
-         * Computes the homography matrix from source to destination points.
-         * This solves a system of linear equations Ax = b.
-         */
         function getHomographyMatrix(src, dst) {
-            const A = [];
-            for (let i = 0; i < 4; i++) {
-                const { x: sx, y: sy } = src[i];
-                const { x: dx, y: dy } = dst[i];
-                A.push([sx, sy, 1, 0, 0, 0, -dx * sx, -dx * sy, -dx]);
-                A.push([0, 0, 0, sx, sy, 1, -dy * sx, -dy * sy, -dy]);
-            }
-            
-            // This is a simplified solver for Ax=0 using SVD, but for web, a Gaussian elimination on Ax=b is more direct.
-            // Let's re-frame as Ax=b where h_33 (H[8]) is 1.
-            const b = [];
-            for (let i = 0; i < 4; i++) {
-                 b.push(dst[i].x);
-                 b.push(dst[i].y);
-            }
-            
-            const A_inv = [];
-            for(let i=0; i<8; i++) {
-                A_inv.push([]);
-                 for(let j=0; j<8; j++) {
-                    const {x:sx, y:sy} = src[Math.floor(i/2)];
-                    if (i % 2 === 0) { // first row for point i
-                        A_inv[i][0] = sx; A_inv[i][1] = sy; A_inv[i][2] = 1; A_inv[i][3] = 0; A_inv[i][4] = 0; A_inv[i][5] = 0;
-                        A_inv[i][6] = -dst[Math.floor(i/2)].x * sx; A_inv[i][7] = -dst[Math.floor(i/2)].x * sy;
-                    } else { // second row
-                        A_inv[i][0] = 0; A_inv[i][1] = 0; A_inv[i][2] = 0; A_inv[i][3] = sx; A_inv[i][4] = sy; A_inv[i][5] = 1;
-                        A_inv[i][6] = -dst[Math.floor(i/2)].y * sx; A_inv[i][7] = -dst[Math.floor(i/2)].y * sy;
-                    }
-                }
-            }
-            
-            const h = gaussianElimination(A_inv, b);
-            if (!h) throw new Error("Matrix is singular.");
-            return [...h, 1]; // Append h33=1
+            const A = []; for (let i = 0; i < 4; i++) { const { x: sx, y: sy } = src[i]; const { x: dx, y: dy } = dst[i]; A.push([sx, sy, 1, 0, 0, 0, -dx * sx, -dx * sy]); A.push([0, 0, 0, sx, sy, 1, -dy * sx, -dy * sy]); }
+            const b = []; for (let i = 0; i < 4; i++) { b.push(dst[i].x); b.push(dst[i].y); }
+            const h = gaussianElimination(A, b); if (!h) throw new Error("Matrix is singular."); return [...h, 1];
         }
         
-        /**
-         * Solves a system of linear equations Ax=b using Gaussian elimination.
-         */
         function gaussianElimination(A, b) {
-            const n = A.length;
-            for (let i = 0; i < n; i++) {
-                // Find pivot
-                let maxRow = i;
-                for (let k = i + 1; k < n; k++) {
-                    if (Math.abs(A[k][i]) > Math.abs(A[maxRow][i])) {
-                        maxRow = k;
-                    }
-                }
-                [A[i], A[maxRow]] = [A[maxRow], A[i]];
-                [b[i], b[maxRow]] = [b[maxRow], b[i]];
-
-                // Check for singular matrix
-                if (Math.abs(A[i][i]) < 1e-10) return null;
-
-                // Normalize pivot row
-                for (let k = i + 1; k < n; k++) {
-                    A[i][k] /= A[i][i];
-                }
-                b[i] /= A[i][i];
-                A[i][i] = 1;
-
-                // Eliminate other rows
-                for (let k = 0; k < n; k++) {
-                    if (k !== i) {
-                        const factor = A[k][i];
-                        for (let j = i; j < n; j++) {
-                            A[k][j] -= factor * A[i][j];
-                        }
-                        b[k] -= factor * b[i];
-                    }
-                }
-            }
-            return b; // The solution vector x
+            const n = A.length; const C = Array(n).fill(0).map((_, i) => [...A[i], b[i]]);
+            for (let i = 0; i < n; i++) { let pivot = i; for (let j = i + 1; j < n; j++) { if (Math.abs(C[j][i]) > Math.abs(C[pivot][i])) { pivot = j; } } [C[i], C[pivot]] = [C[pivot], C[i]];
+                const div = C[i][i]; if(Math.abs(div) < 1e-10) return null; for (let j = i; j < n + 1; j++) { C[i][j] /= div; }
+                for (let j = 0; j < n; j++) { if (i !== j) { const mult = C[j][i]; for (let k = i; k < n + 1; k++) { C[j][k] -= mult * C[i][k]; } } }
+            } const x = Array(n); for (let i = 0; i < n; i++) { x[i] = C[i][n]; } return x;
         }
     </script>
 </body>
