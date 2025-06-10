@@ -1,0 +1,864 @@
+<!-- HTML+CSS+JSでバドミントン動画解析ツールを制作しています
+以下のコードでは、アップした動画に対してMediapipeで姿勢を推定し、足首と手首の座標を取得します。足首の座標に対してコートに合わせたトリミングの補正を行うことでコート上の移動軌跡や位置ヒートマップ解析を行い、また手首の動きに対してはSHOT_VELOCITY_THRESHOLDを設定して、激しい手首の運動を確認したショットタイミングでのショートカットボタンを作成して参照しやすくします。
+ここに加えて、SHOT_VELOCITY_THRESHOLDを自由に調整できる機能を追加するコードを、HTML+CSS+JSで１つのファイルでまとめて出力して。
+wristVelocityCanvasの左側に自由に範囲内をドラッグできるポイントを設置して、changeのタイミングでdetectShots()を更新する仕様で。 -->
+
+
+
+<!-- はい、承知いたしました。
+バドミントン動画解析ツールに、ショット判定の閾値（SHOT_VELOCITY_THRESHOLD）をグラフの横に設置したスライダーで自由に調整できる機能を追加します。スライダーの値が変更されたタイミングで、ショットの再検出と関連UIの更新が実行されるようにします。
+
+以下が、機能を追加したHTML、CSS、JavaScriptを1つのファイルにまとめた完全なコードです。 -->
+
+<!DOCTYPE html>
+<html lang="ja">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>バドミントン動作分析アプリ</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        /* カスタムCSS */
+        body {
+            font-family: 'Inter', 'Helvetica Neue', Arial, sans-serif;
+        }
+
+        /* スライダーのつまみのスタイル */
+        input[type="range"]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            appearance: none;
+            width: 20px;
+            height: 20px;
+            background: #fb923c;
+            /* orange-400 */
+            cursor: pointer;
+            border-radius: 50%;
+            border: 2px solid white;
+            box-shadow: 0 0 2px rgba(0, 0, 0, 0.3);
+        }
+
+        input[type="range"]::-moz-range-thumb {
+            width: 18px;
+            /* Firefoxはborderを内側に描画するため少し小さく */
+            height: 18px;
+            background: #fb923c;
+            cursor: pointer;
+            border-radius: 50%;
+            border: 2px solid white;
+            box-shadow: 0 0 2px rgba(0, 0, 0, 0.3);
+        }
+
+        /* *** ADDED *** 縦スライダー用のスタイル */
+        .slider-vertical {
+            -webkit-appearance: slider-vertical;
+            /* For Chrome, Safari, Opera */
+            writing-mode: bt-lr;
+            /* For Firefox */
+        }
+
+        .analysis-canvas {
+            border: 1px solid #e5e7eb;
+            /* gray-200 */
+            background-color: #f9fafb;
+            /* gray-50 */
+        }
+
+        .container {
+            max-width: 900px;
+        }
+
+        h1,
+        h2,
+        h3 {
+            text-shadow: 1px 1px 2px rgba(0, 0, 0, 0.1);
+        }
+
+        #cropOverlayCanvas {
+            touch-action: none;
+            /* スマホでの操作を考慮 */
+            cursor: grab;
+        }
+    </style>
+</head>
+
+<body
+    class="bg-gradient-to-br from-orange-100 via-amber-100 to-yellow-100 text-gray-800 p-4 min-h-screen flex items-center justify-center">
+    <div class="container mx-auto bg-white bg-opacity-70 p-6 rounded-xl shadow-2xl w-full">
+        <header class="text-center mb-8">
+            <h1 class="text-4xl font-bold text-orange-600">バドミントン動作分析</h1>
+            <p class="text-gray-600 mt-1">動画から選手の動きを捉え、軌跡とヒートマップで可視化します。</p>
+        </header>
+
+        <!-- Section 1: Video Upload and Display -->
+        <section class="mb-8 p-4 border border-orange-200 rounded-lg bg-white/50">
+            <h2 class="text-2xl font-semibold mb-3 text-orange-500">1. 動画の準備</h2>
+            <input type="file" id="fileInput" accept="video/*" class="block w-full text-sm text-slate-500
+              file:mr-4 file:py-2 file:px-4
+              file:rounded-lg file:border-0
+              file:text-sm file:font-semibold
+              file:bg-orange-100 file:text-orange-700
+              hover:file:bg-orange-200 disabled:opacity-50 transition-colors" disabled>
+            <p id="loadingTxt" class="text-sm text-gray-500 mt-2">AIモデルを読み込んでいます... 初回は数秒～数十秒かかることがあります。</p>
+
+            <div id="videoContainer" class="mt-4 grid grid-cols-1 md:grid-cols-2 gap-4 items-start">
+                <div>
+                    <h3 class="text-lg font-medium text-gray-700 mb-1">オリジナル動画</h3>
+                    <video id="video" controls
+                        class="w-full rounded-md shadow-md aspect-video hidden bg-gray-200"></video>
+                </div>
+                <div class="relative">
+                    <h3 class="text-lg font-medium text-gray-700 mb-1">姿勢推定オーバーレイ</h3>
+                    <div id="poseCanvasContainer" class="w-full aspect-video">
+                        <canvas id="poseCanvas"
+                            class="w-full rounded-md shadow-md aspect-video hidden bg-gray-200"></canvas>
+                        <canvas id="cropOverlayCanvas" class="absolute top-0 left-0 w-full h-full hidden"></canvas>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Section 2: Recording Controls -->
+        <section class="mb-8 p-4 border border-orange-200 rounded-lg text-center bg-white/50">
+            <h2 class="text-2xl font-semibold mb-3 text-orange-500">2. 録画と座標取得</h2>
+            <button id="startButton"
+                class="bg-orange-500 hover:bg-orange-600 text-white font-bold py-3 px-6 rounded-lg shadow-md disabled:opacity-50 transition-transform hover:scale-105"
+                disabled>録画開始</button>
+            <button id="stopButton"
+                class="bg-red-500 hover:bg-red-600 text-white font-bold py-3 px-6 rounded-lg shadow-md disabled:opacity-50 ml-2 transition-transform hover:scale-105"
+                disabled>録画停止</button>
+            <a id="downloadLink" href="#" download="badminton_analysis.webm"
+                class="hidden mt-4 inline-block bg-green-500 hover:bg-green-600 text-white font-bold py-3 px-6 rounded-lg shadow-md transition-transform hover:scale-105">録画をダウンロード</a>
+        </section>
+
+        <!-- Section 3: Movement Analysis -->
+        <section id="analysisSection" class="mb-6 p-4 border border-orange-200 rounded-lg hidden bg-white/50">
+            <h2 class="text-2xl font-semibold mb-3 text-orange-500">3. 移動・ショット分析結果</h2>
+
+            <div id="correctionControls" class="mb-4 p-4 border border-indigo-200 rounded-lg bg-white/50">
+                <h3 class="text-xl font-semibold mb-2 text-indigo-500">座標の補正</h3>
+                <p class="text-sm text-gray-600 mb-3">動画内のコートの歪みを補正し、より正確な軌跡を表示します。</p>
+                <button id="startCropButton"
+                    class="bg-indigo-500 hover:bg-indigo-600 text-white font-bold py-2 px-4 rounded-lg shadow-md transition-transform hover:scale-105">コートに合わせてトリミング</button>
+                <button id="applyCorrectionButton"
+                    class="bg-teal-500 hover:bg-teal-600 text-white font-bold py-2 px-4 rounded-lg shadow-md ml-2 hidden">補正を適用</button>
+                <button id="resetCorrectionButton"
+                    class="bg-gray-400 hover:bg-gray-500 text-white font-bold py-2 px-4 rounded-lg shadow-md ml-2 hidden">補正をリセット</button>
+                <p id="cropInstructions" class="text-sm text-indigo-700 mt-2 hidden">コートの四隅をドラッグして調整してください。</p>
+            </div>
+
+            <button id="analyzeButton"
+                class="bg-blue-500 hover:bg-blue-600 text-white font-bold py-3 px-6 rounded-lg shadow-md w-full mb-4 transition-transform hover:scale-105">分析を開始・更新</button>
+
+            <div id="visualizationControls" class="mt-4 hidden">
+                <div class="mb-4">
+                    <label for="timeSlider" class="block mb-1 text-sm font-medium text-gray-700">表示する時間範囲
+                        (スライダーで調整):</label>
+                    <input type="range" id="timeSlider" min="0" max="100" value="100" step="0.1"
+                        class="w-full h-3 bg-orange-200 rounded-lg appearance-none cursor-pointer">
+                    <div class="flex justify-between text-xs text-gray-500 mt-1">
+                        <span id="sliderMinTime">0.0s</span>
+                        <span id="sliderCurrentTimeLabel" class="font-semibold">現在: <span
+                                id="sliderCurrentTime">0.0s</span></span>
+                        <span id="sliderMaxTime">0.0s</span>
+                    </div>
+                </div>
+
+                <div id="shotButtonsContainer" class="mt-2 flex flex-wrap items-center gap-2"></div>
+
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mt-4">
+                    <div>
+                        <h3 class="text-xl font-semibold mb-2 text-orange-500">移動軌跡</h3>
+                        <p class="text-xs text-gray-500 mb-1">青: 左足首, 赤: 右足首</p>
+                        <canvas id="trajectoryCanvas"
+                            class="w-full aspect-[1340/610] analysis-canvas rounded-md shadow"></canvas>
+                    </div>
+                    <div>
+                        <h3 class="text-xl font-semibold mb-2 text-orange-500">ヒートマップ</h3>
+                        <p class="text-xs text-gray-500 mb-1">滞在頻度が高いほど赤く表示</p>
+                        <canvas id="heatmapCanvas"
+                            class="w-full aspect-[1340/610] analysis-canvas rounded-md shadow"></canvas>
+                    </div>
+
+                    <!-- *** MODIFIED *** Wrist Velocity Analysis with Threshold Slider -->
+                    <div id="wristAnalysisContainer" class="md:col-span-2 hidden">
+                        <h3 class="text-xl font-semibold mb-2 text-orange-500">手首の速度とショット検出</h3>
+                        <p class="text-xs text-gray-500 mb-2">青: 左手首, 赤: 右手首の速度。赤い点線はショット判定の閾値です。左のスライダーで調整できます。</p>
+                        <div class="flex gap-4 items-stretch">
+                            <!-- Threshold Slider -->
+                            <div class="flex flex-col items-center justify-center p-2 bg-gray-100 rounded-lg">
+                                <label for="thresholdSlider" class="text-xs font-medium text-gray-700 mb-2">閾値</label>
+                                <input type="range" id="thresholdSlider" min="500" max="15000" value="5000" step="100"
+                                    class="h-32 slider-vertical">
+                                <span id="thresholdValue" class="text-sm font-semibold text-orange-600 mt-2">5000</span>
+                            </div>
+                            <!-- Canvas -->
+                            <div class="flex-grow">
+                                <canvas id="wristVelocityCanvas"
+                                    class="w-full h-48 analysis-canvas rounded-md shadow"></canvas>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+    </div>
+
+    <script type="module">
+        import {
+            PoseLandmarker,
+            FilesetResolver,
+            DrawingUtils
+        } from "https://cdn.skypack.dev/@mediapipe/tasks-vision@0.10.10";
+
+        // DOM Elements
+        const fileInput = document.getElementById('fileInput');
+        const video = document.getElementById('video');
+        const poseCanvas = document.getElementById('poseCanvas');
+        const startButton = document.getElementById('startButton');
+        const stopButton = document.getElementById('stopButton');
+        const downloadLink = document.getElementById('downloadLink');
+        const loadingTxt = document.getElementById('loadingTxt');
+        const analysisSection = document.getElementById('analysisSection');
+        const analyzeButton = document.getElementById('analyzeButton');
+        const visualizationControls = document.getElementById('visualizationControls');
+        const timeSlider = document.getElementById('timeSlider');
+        const sliderMinTime = document.getElementById('sliderMinTime');
+        const sliderCurrentTime = document.getElementById('sliderCurrentTime');
+        const sliderMaxTime = document.getElementById('sliderMaxTime');
+        const trajectoryCanvas = document.getElementById('trajectoryCanvas');
+        const heatmapCanvas = document.getElementById('heatmapCanvas');
+        const correctionControls = document.getElementById('correctionControls');
+        const startCropButton = document.getElementById('startCropButton');
+        const applyCorrectionButton = document.getElementById('applyCorrectionButton');
+        const resetCorrectionButton = document.getElementById('resetCorrectionButton');
+        const cropInstructions = document.getElementById('cropInstructions');
+        const cropOverlayCanvas = document.getElementById('cropOverlayCanvas');
+        const poseCanvasContainer = document.getElementById('poseCanvasContainer');
+
+        const wristAnalysisContainer = document.getElementById('wristAnalysisContainer');
+        const wristVelocityCanvas = document.getElementById('wristVelocityCanvas');
+        const shotButtonsContainer = document.getElementById('shotButtonsContainer');
+        // *** ADDED *** DOM Elements for Threshold Slider
+        const thresholdSlider = document.getElementById('thresholdSlider');
+        const thresholdValue = document.getElementById('thresholdValue');
+
+        // Canvas Contexts
+        let ctxPose = poseCanvas.getContext('2d');
+        let ctxTrajectory = trajectoryCanvas.getContext('2d');
+        let ctxHeatmap = heatmapCanvas.getContext('2d');
+        let ctxCropOverlay = cropOverlayCanvas.getContext('2d');
+        let ctxWristVelocity = wristVelocityCanvas.getContext('2d');
+
+        // MediaRecorder & PoseLandmarker
+        let mediaRecorder;
+        let recordedChunks = [];
+        let poseLandmarker = null;
+        let drawingUtilsPose = null;
+        let runningMode = 'VIDEO';
+        let lastVideoTime = -1;
+        let anklePositions = [];
+        let wristPositions = [];
+        let stream = null;
+
+        // Analysis & Correction State
+        const HEATMAP_GRID_SIZE = 25;
+        let videoDuration = 0;
+        let cropPoints = [];
+        let correctedAnklePositions = [];
+        let correctedWristPositions = [];
+        let shotTimes = [];
+        let homographyMatrix = null;
+        let isCorrectionApplied = false;
+        let isCroppingMode = false;
+        let isDragging = false;
+        let draggedPointIndex = -1;
+        const CROP_HANDLE_RADIUS = 35; // ハンドルの半径　大きく修正
+
+        // Badminton court dimensions (for aspect ratio)
+        const COURT_WIDTH = 610;
+        const COURT_LENGTH = 1340;
+        // *** MODIFIED *** Threshold for shot detection (pixels/second). Now adjustable.
+        let SHOT_VELOCITY_THRESHOLD = 5000;
+
+        async function initPoseLandmarker() {
+            try {
+                const vision = await FilesetResolver.forVisionTasks(
+                    "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.10/wasm"
+                );
+                poseLandmarker = await PoseLandmarker.createFromOptions(vision, {
+                    baseOptions: {
+                        modelAssetPath: "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task",
+                        delegate: "GPU"
+                    },
+                    runningMode: runningMode,
+                    numPoses: 1
+                });
+                console.log("PoseLandmarker initialized");
+                loadingTxt.textContent = "モデル読み込み完了。動画を選択してください。";
+                fileInput.disabled = false;
+            } catch (err) {
+                console.error("Error initializing PoseLandmarker:", err);
+                loadingTxt.textContent = "モデル読み込みに失敗しました。ページをリロードしてください。";
+            }
+        }
+
+        initPoseLandmarker();
+
+        fileInput.addEventListener('change', (event) => {
+            const file = event.target.files[0];
+            if (!file) return;
+
+            const fileURL = URL.createObjectURL(file);
+            video.src = fileURL;
+            video.style.display = 'block';
+            poseCanvas.style.display = 'block';
+
+            video.onloadedmetadata = () => {
+                videoDuration = video.duration;
+                poseCanvas.width = video.videoWidth;
+                poseCanvas.height = video.videoHeight;
+                cropOverlayCanvas.width = video.videoWidth;
+                cropOverlayCanvas.height = video.videoHeight;
+
+                [trajectoryCanvas, heatmapCanvas].forEach(cvs => {
+                    cvs.width = COURT_LENGTH;
+                    cvs.height = COURT_WIDTH;
+                });
+                wristVelocityCanvas.width = 1200;
+                wristVelocityCanvas.height = 400;
+
+                drawingUtilsPose = new DrawingUtils(ctxPose);
+                startButton.disabled = false;
+
+                resetAllAnalysis();
+                loadingTxt.textContent = "動画の準備ができました。録画を開始できます。";
+            };
+            video.onerror = () => {
+                console.error("Error loading video file.");
+                loadingTxt.textContent = "エラー: 動画ファイルの読み込みに失敗しました。";
+            }
+        });
+
+        function resetAllAnalysis() {
+            analysisSection.classList.add('hidden');
+            visualizationControls.classList.add('hidden');
+            correctionControls.style.display = 'none';
+            wristAnalysisContainer.classList.add('hidden');
+            stopCroppingMode();
+            anklePositions = [];
+            wristPositions = [];
+            correctedAnklePositions = [];
+            correctedWristPositions = [];
+            shotTimes = [];
+            shotButtonsContainer.innerHTML = '';
+            recordedChunks = [];
+            isCorrectionApplied = false;
+            homographyMatrix = null;
+            downloadLink.classList.add('hidden');
+            analyzeButton.disabled = true;
+        }
+
+        async function drawFrame() {
+            if (!video || video.paused || video.ended || video.readyState < 2) {
+                requestAnimationFrame(drawFrame);
+                return;
+            }
+
+            ctxPose.clearRect(0, 0, poseCanvas.width, poseCanvas.height);
+            ctxPose.drawImage(video, 0, 0, poseCanvas.width, poseCanvas.height);
+
+            if (poseLandmarker && video.currentTime !== lastVideoTime) {
+                const startTimeMs = performance.now();
+                lastVideoTime = video.currentTime;
+
+                poseLandmarker.detectForVideo(video, startTimeMs, (result) => {
+                    if (result.landmarks && result.landmarks.length > 0) {
+                        const landmarks = result.landmarks[0];
+                        if (drawingUtilsPose) {
+                            drawingUtilsPose.drawConnectors(landmarks, PoseLandmarker.POSE_CONNECTIONS, { color: '#FF8A65', lineWidth: 2 });
+                            drawingUtilsPose.drawLandmarks(landmarks, { color: '#FFAB91', radius: 3 });
+                        }
+                        if (mediaRecorder && mediaRecorder.state === "recording") {
+                            const leftAnkle = landmarks[27];
+                            const rightAnkle = landmarks[28];
+                            if (leftAnkle && rightAnkle) {
+                                anklePositions.push({
+                                    time: video.currentTime,
+                                    leftAnkle: { x: leftAnkle.x, y: leftAnkle.y, visibility: leftAnkle.visibility },
+                                    rightAnkle: { x: rightAnkle.x, y: rightAnkle.y, visibility: rightAnkle.visibility }
+                                });
+                            }
+                            const leftWrist = landmarks[15];
+                            const rightWrist = landmarks[16];
+                            if (leftWrist && rightWrist) {
+                                wristPositions.push({
+                                    time: video.currentTime,
+                                    leftWrist: { x: leftWrist.x, y: leftWrist.y, visibility: leftWrist.visibility },
+                                    rightWrist: { x: rightWrist.x, y: rightWrist.y, visibility: rightWrist.visibility }
+                                });
+                            }
+                        }
+                    }
+                });
+            }
+            if (isCroppingMode) {
+                drawCropOverlay();
+            }
+            requestAnimationFrame(drawFrame);
+        }
+
+        video.addEventListener('play', () => {
+            lastVideoTime = -1;
+            requestAnimationFrame(drawFrame);
+        });
+
+        video.addEventListener('ended', () => {
+            if (mediaRecorder && mediaRecorder.state === 'recording') {
+                stopRecording();
+            }
+        });
+
+        startButton.addEventListener('click', () => {
+            if (poseCanvas.captureStream) {
+                stream = poseCanvas.captureStream(30);
+            } else {
+                console.error("captureStream not supported.");
+                loadingTxt.textContent = "エラー: お使いのブラウザは録画機能に対応していません。";
+                return;
+            }
+
+            video.play();
+            resetAllAnalysis();
+
+            try {
+                mediaRecorder = new MediaRecorder(stream, { mimeType: 'video/webm; codecs=vp9' });
+            } catch (e) {
+                mediaRecorder = new MediaRecorder(stream, { mimeType: 'video/webm' });
+            }
+
+            mediaRecorder.ondataavailable = (event) => {
+                if (event.data && event.data.size > 0) {
+                    recordedChunks.push(event.data);
+                }
+            };
+
+            mediaRecorder.onstop = () => {
+                const blob = new Blob(recordedChunks, { type: 'video/webm' });
+                const url = URL.createObjectURL(blob);
+                downloadLink.href = url;
+                downloadLink.classList.remove('hidden');
+
+                analysisSection.classList.remove('hidden');
+                correctionControls.style.display = 'block';
+                analyzeButton.disabled = false;
+                visualizationControls.classList.add('hidden');
+
+                const recordedPositions = anklePositions.length > 0 ? anklePositions : wristPositions;
+                if (recordedPositions.length > 0) {
+                    const maxTime = recordedPositions[recordedPositions.length - 1].time;
+                    timeSlider.max = maxTime.toFixed(1);
+                    timeSlider.value = maxTime.toFixed(1);
+                    sliderMaxTime.textContent = `${maxTime.toFixed(1)}s`;
+                    sliderCurrentTime.textContent = `${maxTime.toFixed(1)}s`;
+                }
+                sliderMinTime.textContent = "0.0s";
+                loadingTxt.textContent = "録画が完了しました。「分析を開始」または「コートに合わせてトリミング」を行ってください。";
+            };
+
+            mediaRecorder.start();
+            loadingTxt.textContent = "録画中です...";
+            startButton.disabled = true;
+            stopButton.disabled = false;
+        });
+
+        function stopRecording() {
+            if (mediaRecorder && mediaRecorder.state === 'recording') {
+                mediaRecorder.stop();
+            }
+            if (stream) {
+                stream.getTracks().forEach(track => track.stop());
+                stream = null;
+            }
+            startButton.disabled = false;
+            stopButton.disabled = true;
+        }
+        stopButton.addEventListener('click', stopRecording);
+
+        analyzeButton.addEventListener('click', () => {
+            if (anklePositions.length === 0 && wristPositions.length === 0) {
+                loadingTxt.textContent = "情報: 分析データがありません。先に動画を録画してください。";
+                return;
+            }
+            visualizationControls.classList.remove('hidden');
+            wristAnalysisContainer.classList.remove('hidden');
+
+            // Sync slider UI with the current threshold value
+            thresholdSlider.value = SHOT_VELOCITY_THRESHOLD;
+            thresholdValue.textContent = SHOT_VELOCITY_THRESHOLD;
+
+            const wristData = isCorrectionApplied ? correctedWristPositions : wristPositions;
+            const velocities = calculateWristVelocities(wristData, isCorrectionApplied);
+            shotTimes = detectShots(velocities, SHOT_VELOCITY_THRESHOLD);
+            createShotButtons(shotTimes);
+
+            drawAnalysis(parseFloat(timeSlider.value));
+            loadingTxt.textContent = "移動分析とショット分析の結果を表示しています。";
+        });
+
+        timeSlider.addEventListener('input', () => {
+            const currentTime = parseFloat(timeSlider.value);
+            sliderCurrentTime.textContent = `${currentTime.toFixed(1)}s`;
+            if (!visualizationControls.classList.contains('hidden')) {
+                drawAnalysis(currentTime);
+            }
+        });
+
+        function drawAnalysis(currentTime) {
+            const ankleData = isCorrectionApplied ? correctedAnklePositions : anklePositions;
+            const filteredAnkleData = ankleData.filter(p => p.time <= currentTime);
+
+            [trajectoryCanvas, heatmapCanvas].forEach(canvas => {
+                const ctx = canvas.getContext('2d');
+                ctx.clearRect(0, 0, canvas.width, canvas.height);
+                if (isCorrectionApplied) {
+                    drawBadmintonCourt(ctx);
+                }
+            });
+
+            if (filteredAnkleData.length > 0) {
+                drawTrajectory(filteredAnkleData, isCorrectionApplied, trajectoryCanvas);
+                drawHeatmap(filteredAnkleData, isCorrectionApplied, heatmapCanvas);
+                loadingTxt.textContent = isCorrectionApplied ? "補正後の分析結果を表示中..." : "移動分析結果を表示中...";
+            }
+
+            const wristData = isCorrectionApplied ? correctedWristPositions : wristPositions;
+            const velocities = calculateWristVelocities(wristData, isCorrectionApplied);
+            drawWristVelocityGraph(velocities, currentTime);
+        }
+
+        function drawBadmintonCourt(ctx) {
+            const w = ctx.canvas.width;
+            const h = ctx.canvas.height;
+            ctx.fillStyle = '#f0fdf4';
+            ctx.fillRect(0, 0, w, h);
+            ctx.strokeStyle = '#4b5563';
+            ctx.lineWidth = w / 200;
+            ctx.strokeRect(0, 0, w, h);
+            ctx.beginPath(); ctx.moveTo(w / 2, 0); ctx.lineTo(w / 2, h); ctx.stroke();
+            ctx.beginPath(); ctx.moveTo(w * 0.05, h / 2); ctx.lineTo(w * 0.95, h / 2); ctx.stroke();
+            ctx.beginPath(); ctx.moveTo(w * 0.05, 0); ctx.lineTo(w * 0.05, h); ctx.moveTo(w * 0.95, 0); ctx.lineTo(w * 0.95, h); ctx.moveTo(w / 2 + w * 0.3, 0); ctx.lineTo(w / 2 + w * 0.3, h); ctx.moveTo(w / 2 - w * 0.3, 0); ctx.lineTo(w / 2 - w * 0.3, h); ctx.stroke();
+        }
+
+    function drawTrajectory(positions, isCorrected, canvas) {
+        // 1. 描画コンテキストの取得と基本設定
+        const ctx = canvas.getContext('2d'); // canvasから2D描画コンテキストを取得
+        ctx.lineWidth = 6; // 描画する線の太さを6ピクセルに設定
+
+        // 2. 座標取得ヘルパー関数
+        // isCorrectedフラグに基づいて座標を処理する
+        // true: 座標は既に補正済み（コート座標系）なのでそのまま使用
+        // false: 座標は正規化座標（0.0～1.0）なので、canvasの幅/高さでスケールしてピクセル座標に変換
+        const getCoords = (pos) => isCorrected ? { x: pos.x, y: pos.y } : { x: pos.x * canvas.width, y: pos.y * canvas.height };
+
+        // 3. 左足首の軌跡を描画
+        ctx.strokeStyle = 'rgba(59, 130, 246, 0.8)'; // 線の色を青系（半透明）に設定
+        ctx.beginPath(); // 新しい描画パスを開始
+        // positions配列の各要素（p）に対して処理
+        positions.forEach((p, i) => {
+            if (p.leftAnkle) { // 左足首のデータが存在する場合
+                const {x, y} = getCoords(p.leftAnkle); // 描画用の座標を取得
+                // 最初の点、または前の点に左足首データがなかった場合は、moveToで描画開始点を設定
+                // それ以外の場合は、lineToで前の点から現在の点へ線を追加
+                if (i === 0 || !positions[i-1].leftAnkle) ctx.moveTo(x, y);
+                else ctx.lineTo(x, y);
+            }
+        });
+        ctx.stroke(); // パスに沿って実際に線を描画
+
+        // 4. 右足首の軌跡を描画 (左足首と同様の処理)
+        ctx.strokeStyle = 'rgba(239, 68, 68, 0.8)'; // 線の色を赤系（半透明）に設定
+        ctx.beginPath(); // 新しい描画パスを開始
+        positions.forEach((p, i) => {
+            if (p.rightAnkle) { // 右足首のデータが存在する場合
+                const {x, y} = getCoords(p.rightAnkle);
+                if (i === 0 || !positions[i-1].rightAnkle) ctx.moveTo(x, y);
+                else ctx.lineTo(x, y);
+            }
+        });
+        ctx.stroke(); // パスに沿って実際に線を描画
+
+        // 5. 軌跡の最後の点を大きく表示
+        if (positions.length > 0) {
+            const lastPos = positions[positions.length - 1];
+            if (lastPos.leftAnkle) {
+                const { x, y } = getCoords(lastPos.leftAnkle);
+                ctx.fillStyle = 'rgba(59, 130, 246, 0.8)';
+                ctx.beginPath();
+                ctx.arc(x, y, 12, 0, 2 * Math.PI); // 半径12ピクセルの円を描画
+                ctx.fill();
+            }
+            if (lastPos.rightAnkle) {
+                const { x, y } = getCoords(lastPos.rightAnkle);
+                ctx.fillStyle = 'rgba(239, 68, 68, 0.8)';
+                ctx.beginPath();
+                ctx.arc(x, y, 12, 0, 2 * Math.PI); // 半径12ピクセルの円を描画
+                ctx.fill();
+            }
+        }
+    }
+
+
+        function drawHeatmap(positions, isCorrected, canvas) {
+            const ctx = canvas.getContext('2d');
+            const gridW = canvas.width / HEATMAP_GRID_SIZE;
+            const gridH = canvas.height / HEATMAP_GRID_SIZE;
+            const heatmapData = Array(HEATMAP_GRID_SIZE).fill(null).map(() => Array(HEATMAP_GRID_SIZE).fill(0));
+            let maxHits = 0;
+            const getCoords = (pos) => isCorrected ? { x: pos.x, y: pos.y } : { x: pos.x * canvas.width, y: pos.y * canvas.height };
+            positions.forEach(p => {
+                [p.leftAnkle, p.rightAnkle].forEach(ankle => {
+                    if (ankle) {
+                        const { x, y } = getCoords(ankle);
+                        const gridX = Math.floor(x / gridW);
+                        const gridY = Math.floor(y / gridH);
+                        if (gridX >= 0 && gridX < HEATMAP_GRID_SIZE && gridY >= 0 && gridY < HEATMAP_GRID_SIZE) {
+                            heatmapData[gridY][gridX]++;
+                            if (heatmapData[gridY][gridX] > maxHits) maxHits = heatmapData[gridY][gridX];
+                        }
+                    }
+                });
+            });
+            if (maxHits === 0) return;
+            for (let y = 0; y < HEATMAP_GRID_SIZE; y++) {
+                for (let x = 0; x < HEATMAP_GRID_SIZE; x++) {
+                    if (heatmapData[y][x] > 0) {
+                        const intensity = heatmapData[y][x] / maxHits;
+                        const g = Math.floor(255 * (1 - intensity));
+                        ctx.fillStyle = `rgba(255, ${g}, 0, ${Math.max(0.1, intensity * 0.7)})`;
+                        ctx.fillRect(x * gridW, y * gridH, gridW, gridH);
+                    }
+                }
+            }
+        }
+
+        // --- Cropping and Correction Functions ---
+        function startCroppingMode() { isCroppingMode = true; cropOverlayCanvas.classList.remove('hidden'); cropInstructions.classList.remove('hidden'); applyCorrectionButton.classList.remove('hidden'); resetCorrectionButton.classList.remove('hidden'); const w = cropOverlayCanvas.width, h = cropOverlayCanvas.height, mX = w * 0.15, mY = h * 0.15; cropPoints = [{ x: mX, y: mY }, { x: w - mX, y: mY }, { x: w - mX, y: h - mY }, { x: mX, y: h - mY }]; drawCropOverlay(); }
+        function stopCroppingMode() { isCroppingMode = false; isDragging = false; draggedPointIndex = -1; cropOverlayCanvas.classList.add('hidden'); cropInstructions.classList.add('hidden'); applyCorrectionButton.classList.add('hidden'); resetCorrectionButton.classList.add('hidden'); }
+        startCropButton.addEventListener('click', () => { if (isCroppingMode) { stopCroppingMode(); startCropButton.textContent = "コートに合わせてトリミング"; } else { startCroppingMode(); startCropButton.textContent = "調整をキャンセル"; } });
+        function drawCropOverlay() { if (!isCroppingMode) return; const ctx = ctxCropOverlay; ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height); ctx.beginPath(); ctx.moveTo(cropPoints[0].x, cropPoints[0].y); for (let i = 1; i < cropPoints.length; i++) { ctx.lineTo(cropPoints[i].x, cropPoints[i].y); } ctx.closePath(); ctx.fillStyle = "rgba(59, 130, 246, 0.2)"; ctx.fill(); ctx.strokeStyle = "rgba(37, 99, 235, 1)"; ctx.lineWidth = 4; ctx.stroke(); cropPoints.forEach((p, i) => { ctx.beginPath(); ctx.arc(p.x, p.y, CROP_HANDLE_RADIUS, 0, 2 * Math.PI); ctx.fillStyle = (i === draggedPointIndex) ? "#dc2626" : "#2563eb"; ctx.fill(); }); }
+        cropOverlayCanvas.addEventListener('mousedown', (e) => { if (!isCroppingMode) return; const rect = cropOverlayCanvas.getBoundingClientRect(); const mouseX = (e.clientX - rect.left) * (cropOverlayCanvas.width / rect.width); const mouseY = (e.clientY - rect.top) * (cropOverlayCanvas.height / rect.height); draggedPointIndex = cropPoints.findIndex(p => Math.sqrt((p.x - mouseX) ** 2 + (p.y - mouseY) ** 2) < CROP_HANDLE_RADIUS); if (draggedPointIndex !== -1) { isDragging = true; cropOverlayCanvas.style.cursor = 'grabbing'; } });
+        cropOverlayCanvas.addEventListener('mousemove', (e) => { if (!isCroppingMode) return; const rect = cropOverlayCanvas.getBoundingClientRect(); const mouseX = (e.clientX - rect.left) * (cropOverlayCanvas.width / rect.width); const mouseY = (e.clientY - rect.top) * (cropOverlayCanvas.height / rect.height); if (isDragging && draggedPointIndex !== -1) { cropPoints[draggedPointIndex] = { x: mouseX, y: mouseY }; drawCropOverlay(); } else { const onHandle = cropPoints.some(p => Math.sqrt((p.x - mouseX) ** 2 + (p.y - mouseY) ** 2) < CROP_HANDLE_RADIUS); cropOverlayCanvas.style.cursor = onHandle ? 'grab' : 'default'; } });
+        const stopDrag = () => { if (isDragging) { isDragging = false; draggedPointIndex = -1; cropOverlayCanvas.style.cursor = 'grab'; } };
+        cropOverlayCanvas.addEventListener('mouseup', stopDrag);
+        cropOverlayCanvas.addEventListener('mouseout', stopDrag);
+        applyCorrectionButton.addEventListener('click', () => {
+            const srcPoints = cropPoints;
+            const dstPoints = [{ x: 0, y: 0 }, { x: trajectoryCanvas.width, y: 0 }, { x: trajectoryCanvas.width, y: trajectoryCanvas.height }, { x: 0, y: trajectoryCanvas.height },];
+            try {
+                homographyMatrix = getHomographyMatrix(srcPoints, dstPoints);
+                correctedAnklePositions = applyHomographyToAllPoints(anklePositions, homographyMatrix, poseCanvas.width, poseCanvas.height, 'Ankle');
+                correctedWristPositions = applyHomographyToAllPoints(wristPositions, homographyMatrix, poseCanvas.width, poseCanvas.height, 'Wrist');
+                isCorrectionApplied = true;
+                stopCroppingMode();
+                startCropButton.textContent = "コートに合わせてトリミング";
+                if (!visualizationControls.classList.contains('hidden')) { drawAnalysis(parseFloat(timeSlider.value)); } else { analyzeButton.click(); }
+                loadingTxt.textContent = "座標の補正が適用されました。";
+            } catch (error) { console.error("Failed to compute homography:", error); loadingTxt.textContent = "エラー: 座標の補正に失敗しました。四隅が交差しないように指定してください。"; }
+        });
+        resetCorrectionButton.addEventListener('click', () => { isCorrectionApplied = false; homographyMatrix = null; correctedAnklePositions = []; correctedWristPositions = []; stopCroppingMode(); startCropButton.textContent = "コートに合わせてトリミング"; if (!visualizationControls.classList.contains('hidden')) { drawAnalysis(parseFloat(timeSlider.value)); } loadingTxt.textContent = "座標の補正をリセットしました。"; });
+
+        function applyHomographyToAllPoints(points, H, videoW, videoH, keyPrefix) {
+            const leftKey = `left${keyPrefix}`;
+            const rightKey = `right${keyPrefix}`;
+            return points.map(p => {
+                const newP = { time: p.time };
+                if (p[leftKey]) {
+                    const absCoords = { x: p[leftKey].x * videoW, y: p[leftKey].y * videoH };
+                    newP[leftKey] = applyHomography(absCoords, H);
+                }
+                if (p[rightKey]) {
+                    const absCoords = { x: p[rightKey].x * videoW, y: p[rightKey].y * videoH };
+                    newP[rightKey] = applyHomography(absCoords, H);
+                }
+                return newP;
+            });
+        }
+
+        function applyHomography(point, H) { const d = H[6] * point.x + H[7] * point.y + 1; return { x: (H[0] * point.x + H[1] * point.y + H[2]) / d, y: (H[3] * point.x + H[4] * point.y + H[5]) / d }; }
+        function getHomographyMatrix(src, dst) { const A = []; for (let i = 0; i < 4; i++) { const { x: sx, y: sy } = src[i]; const { x: dx, y: dy } = dst[i]; A.push([sx, sy, 1, 0, 0, 0, -dx * sx, -dx * sy, -dx]); A.push([0, 0, 0, sx, sy, 1, -dy * sx, -dy * sy, -dy]); } const b = []; for (let i = 0; i < 4; i++) { b.push(dst[i].x); b.push(dst[i].y); } const A_inv = []; for (let i = 0; i < 8; i++) { A_inv.push([]); for (let j = 0; j < 8; j++) { const { x: sx, y: sy } = src[Math.floor(i / 2)]; if (i % 2 === 0) { A_inv[i][0] = sx; A_inv[i][1] = sy; A_inv[i][2] = 1; A_inv[i][3] = 0; A_inv[i][4] = 0; A_inv[i][5] = 0; A_inv[i][6] = -dst[Math.floor(i / 2)].x * sx; A_inv[i][7] = -dst[Math.floor(i / 2)].x * sy; } else { A_inv[i][0] = 0; A_inv[i][1] = 0; A_inv[i][2] = 0; A_inv[i][3] = sx; A_inv[i][4] = sy; A_inv[i][5] = 1; A_inv[i][6] = -dst[Math.floor(i / 2)].y * sx; A_inv[i][7] = -dst[Math.floor(i / 2)].y * sy; } } } const h = gaussianElimination(A_inv, b); if (!h) throw new Error("Matrix is singular."); return [...h, 1]; }
+        function gaussianElimination(A, b) { const n = A.length; for (let i = 0; i < n; i++) { let maxRow = i; for (let k = i + 1; k < n; k++) { if (Math.abs(A[k][i]) > Math.abs(A[maxRow][i])) { maxRow = k; } } [A[i], A[maxRow]] = [A[maxRow], A[i]];[b[i], b[maxRow]] = [b[maxRow], b[i]]; if (Math.abs(A[i][i]) < 1e-10) return null; for (let k = i + 1; k < n; k++) { A[i][k] /= A[i][i]; } b[i] /= A[i][i]; A[i][i] = 1; for (let k = 0; k < n; k++) { if (k !== i) { const factor = A[k][i]; for (let j = i; j < n; j++) { A[k][j] -= factor * A[i][j]; } b[k] -= factor * b[i]; } } } return b; }
+
+        // --- Shot Analysis Functions ---
+
+        function calculateWristVelocities(positions, isCorrected) {
+            const velocities = [];
+            if (positions.length < 2) return velocities;
+
+            for (let i = 1; i < positions.length; i++) {
+                const p1 = positions[i - 1];
+                const p2 = positions[i];
+                const dt = p2.time - p1.time;
+
+                if (dt <= 0) continue;
+
+                let leftV = 0, rightV = 0;
+
+                if (p1.leftWrist && p2.leftWrist) {
+                    const c1 = isCorrected ? p1.leftWrist : { x: p1.leftWrist.x * poseCanvas.width, y: p1.leftWrist.y * poseCanvas.height };
+                    const c2 = isCorrected ? p2.leftWrist : { x: p2.leftWrist.x * poseCanvas.width, y: p2.leftWrist.y * poseCanvas.height };
+                    const distance = Math.sqrt((c2.x - c1.x) ** 2 + (c2.y - c1.y) ** 2);
+                    leftV = distance / dt;
+                }
+                if (p1.rightWrist && p2.rightWrist) {
+                    const c1 = isCorrected ? p1.rightWrist : { x: p1.rightWrist.x * poseCanvas.width, y: p1.rightWrist.y * poseCanvas.height };
+                    const c2 = isCorrected ? p2.rightWrist : { x: p2.rightWrist.x * poseCanvas.width, y: p2.rightWrist.y * poseCanvas.height };
+                    const distance = Math.sqrt((c2.x - c1.x) ** 2 + (c2.y - c1.y) ** 2);
+                    rightV = distance / dt;
+                }
+                velocities.push({ time: p2.time, left: leftV, right: rightV });
+            }
+            return velocities;
+        }
+
+        function detectShots(velocities, threshold) {
+            const shots = [];
+            let isDuringShot = false;
+
+            for (const v of velocities) {
+                const maxVelocity = Math.max(v.left, v.right);
+                if (maxVelocity >= threshold && !isDuringShot) {
+                    shots.push(v.time);
+                    isDuringShot = true;
+                } else if (maxVelocity < threshold) {
+                    isDuringShot = false;
+                }
+            }
+            return shots;
+        }
+
+        function drawWristVelocityGraph(velocities, currentTime) {
+            const ctx = ctxWristVelocity;
+            const canvas = ctx.canvas;
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            if (velocities.length === 0) return;
+
+            const maxT = velocities.length > 0 ? velocities[velocities.length - 1].time : (anklePositions[anklePositions.length - 1]?.time || 1);
+            const maxV = Math.max(...velocities.map(v => Math.max(v.left, v.right)), SHOT_VELOCITY_THRESHOLD * 1.2, 5000);
+
+            const padding = { top: 20, bottom: 40, left: 50, right: 20 };
+            const graphWidth = canvas.width - padding.left - padding.right;
+            const graphHeight = canvas.height - padding.top - padding.bottom;
+
+            const timeToX = (t) => padding.left + (t / maxT) * graphWidth;
+            const velocityToY = (v) => canvas.height - padding.bottom - (v / maxV) * graphHeight;
+
+            // グラフの軸線を描画
+            ctx.beginPath(); // 新しいパスを開始
+            ctx.strokeStyle = '#9ca3af'; // 線の色を灰色に設定 (Tailwind CSSのgray-400に近い)
+            ctx.lineWidth = 2; // 線の太さを2ピクセルに設定
+            // X軸とY軸の線を描画
+            ctx.moveTo(padding.left, padding.top); // Y軸の上端から開始
+            ctx.lineTo(padding.left, canvas.height - padding.bottom); // Y軸の下端へ
+            ctx.lineTo(canvas.width - padding.right, canvas.height - padding.bottom); // X軸の右端へ
+            ctx.stroke(); // 線を描画
+
+            // X軸ラベル「Time (s)」を描画
+            ctx.fillStyle = '#4b5563'; // 文字の色を濃い灰色に設定 (Tailwind CSSのgray-600に近い)
+            ctx.font = '24px Arial'; // フォントをArial、サイズ24pxに設定
+            ctx.textAlign = 'center'; // 文字を中央揃えに
+            ctx.textBaseline = 'top'; // 文字のベースラインを上端に
+            ctx.fillText("Time (s)", canvas.width / 2, canvas.height - padding.bottom + 10); // X軸の中央、下部にテキストを描画
+
+            // Y軸ラベル「手首の速度 (pixels/s)」を描画
+            ctx.save(); // 現在の描画状態を保存 (座標系など)
+            ctx.translate(padding.left - 30, canvas.height / 2); // 描画の原点をY軸の左側、中央に移動
+            ctx.rotate(-Math.PI / 2); // 座標系を-90度回転（文字を縦書きにするため）
+            // fillStyle, textAlign, textBaselineはX軸ラベルの設定が引き継がれる
+            ctx.fillText("手首の速度 (pixels/s)", 0, 0); // 回転後の原点にテキストを描画
+            ctx.restore(); // 保存した描画状態に戻す (座標系を元に戻す)
+
+            // ショット判定の閾値線を描画
+            const thresholdY = velocityToY(SHOT_VELOCITY_THRESHOLD); // 閾値のY座標を計算
+            ctx.beginPath(); // 新しいパスを開始
+            ctx.setLineDash([5, 5]); // 線を破線に設定 (5ピクセルの線と5ピクセルの空白)
+            ctx.strokeStyle = '#ef4444'; // 線の色を赤色に設定 (Tailwind CSSのred-500に近い)
+            ctx.moveTo(padding.left, thresholdY); // 閾値線の左端から開始
+            ctx.lineTo(canvas.width - padding.right, thresholdY); // 閾値線の右端へ
+            ctx.stroke(); // 破線を描画
+            ctx.setLineDash([]); // 線のスタイルを実線に戻す (他の描画に影響しないように)
+
+            // ショット判定の閾値ラベル「ショット閾値」を描画
+            ctx.fillStyle = '#ef4444'; // 文字の色を赤色に設定
+            ctx.font = '24px Arial'; // フォントをArial、サイズ24pxに設定
+            ctx.textAlign = 'left'; // 文字を左揃えに
+            // textBaselineはX軸ラベルの設定('top')が引き継がれる
+            ctx.fillText(`ショット閾値`, padding.left + 5, thresholdY - 15); // 閾値線の左上あたりにテキストを描画
+
+
+            ctx.strokeStyle = 'rgba(59, 130, 246, 0.8)'; ctx.lineWidth = 2; ctx.beginPath();
+            velocities.forEach((v, i) => { const x = timeToX(v.time); const y = velocityToY(v.left); if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y); });
+            ctx.stroke();
+            ctx.strokeStyle = 'rgba(239, 68, 68, 0.8)'; ctx.beginPath();
+            velocities.forEach((v, i) => { const x = timeToX(v.time); const y = velocityToY(v.right); if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y); });
+            ctx.stroke();
+
+            const currentX = timeToX(currentTime);
+            if (currentX >= padding.left && currentX <= canvas.width - padding.right) {
+                ctx.beginPath(); ctx.strokeStyle = '#f97316'; ctx.lineWidth = 1.5; ctx.moveTo(currentX, padding.top); ctx.lineTo(currentX, canvas.height - padding.bottom); ctx.stroke();
+            }
+        }
+
+        function createShotButtons(shots) {
+            shotButtonsContainer.innerHTML = '';
+            if (shots.length > 0) {
+                const title = document.createElement('span');
+                title.className = 'text-sm font-medium text-gray-700 mr-2 self-center';
+                title.textContent = 'ショット時点へ移動:';
+                shotButtonsContainer.appendChild(title);
+            }
+
+            shots.forEach((time, index) => {
+                const button = document.createElement('button');
+                button.className = 'bg-teal-500 hover:bg-teal-600 text-white text-xs font-bold py-1 px-2 rounded-md shadow-sm transition-transform hover:scale-105';
+                button.textContent = `ショット ${index + 1} (${time.toFixed(1)}s)`;
+                button.dataset.time = time;
+                button.addEventListener('click', () => {
+                    const jumpTime = parseFloat(button.dataset.time);
+                    video.currentTime = jumpTime;
+                    timeSlider.value = jumpTime;
+                    sliderCurrentTime.textContent = `${jumpTime.toFixed(1)}s`;
+                    drawAnalysis(jumpTime);
+                });
+                shotButtonsContainer.appendChild(button);
+            });
+        }
+
+        // --- *** ADDED *** Threshold Slider Control ---
+        thresholdSlider.addEventListener('change', () => {
+            SHOT_VELOCITY_THRESHOLD = parseInt(thresholdSlider.value, 10);
+            thresholdValue.textContent = SHOT_VELOCITY_THRESHOLD;
+
+            // 分析が既に表示されている場合のみ更新
+            if (wristPositions.length > 0 && !visualizationControls.classList.contains('hidden')) {
+                const wristData = isCorrectionApplied ? correctedWristPositions : wristPositions;
+                const velocities = calculateWristVelocities(wristData, isCorrectionApplied);
+
+                // ショットの再検出とボタンの更新
+                shotTimes = detectShots(velocities, SHOT_VELOCITY_THRESHOLD);
+                createShotButtons(shotTimes);
+
+                // グラフの再描画
+                drawWristVelocityGraph(velocities, parseFloat(timeSlider.value));
+
+                loadingTxt.textContent = `ショット閾値を ${SHOT_VELOCITY_THRESHOLD} に更新しました。`;
+            }
+        });
+
+    </script>
+
+</body>
+
+</html>
