@@ -4,7 +4,7 @@
 
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
     <title>バドミントン動作分析アプリ</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
@@ -12,6 +12,456 @@
         /* カスタムCSS */
         body {
             font-family: 'Inter', 'Helvetica Neue', Arial, sans-serif;
+            overflow-x: hidden;
+        }
+        
+        /* レスポンシブ対応 */
+        @media (max-width: 768px) {
+            .container {
+                max-width: 100% !important;
+                padding: 0.5rem !important;
+                margin: 0 !important;
+            }
+            
+            .text-4xl {
+                font-size: 1.875rem !important;
+            }
+            
+            .text-2xl {
+                font-size: 1.25rem !important;
+            }
+            
+            .text-xl {
+                font-size: 1.125rem !important;
+            }
+            
+            .grid-cols-1.md\:grid-cols-2 {
+                grid-template-columns: 1fr !important;
+            }
+            
+            .py-3.px-6 {
+                padding: 0.5rem 1rem !important;
+            }
+            
+            .mb-8 {
+                margin-bottom: 1rem !important;
+            }
+            
+            .p-4 {
+                padding: 0.75rem !important;
+            }
+            
+            .gap-4 {
+                gap: 0.75rem !important;
+            }
+            
+            .gap-6 {
+                gap: 1rem !important;
+            }
+            
+            .aspect-video {
+                aspect-ratio: 16/9;
+                max-height: 300px;
+            }
+            
+            .h-48 {
+                height: 200px !important;
+            }
+            
+            .flex-wrap {
+                flex-wrap: wrap !important;
+            }
+            
+            .text-xs {
+                font-size: 0.7rem !important;
+            }
+        }
+        
+        /* ガラスモーフィズムテーマ設定 */
+        :root {
+            --glass-bg: rgba(255, 255, 255, 0.25);
+            --glass-border: rgba(255, 255, 255, 0.18);
+            --glass-shadow: 0 8px 32px 0 rgba(31, 38, 135, 0.37);
+            --backdrop-blur: blur(8px);
+            --text-primary: #2d3748;
+            --text-secondary: #4a5568;
+            --text-accent: #667eea;
+            --accent-gradient: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            --bg-gradient: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            --surface-glass: rgba(255, 255, 255, 0.1);
+            --border-glass: rgba(255, 255, 255, 0.2);
+        }
+        
+        [data-theme="dark"] {
+            --glass-bg: rgba(0, 0, 0, 0.25);
+            --glass-border: rgba(255, 255, 255, 0.1);
+            --glass-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.5);
+            --backdrop-blur: blur(12px);
+            --text-primary: #f7fafc;
+            --text-secondary: #e2e8f0;
+            --text-accent: #90cdf4;
+            --accent-gradient: linear-gradient(135deg, #1e3a8a 0%, #3730a3 100%);
+            --bg-gradient: linear-gradient(135deg, #0f172a 0%, #1e1b4b 100%);
+            --surface-glass: rgba(255, 255, 255, 0.05);
+            --border-glass: rgba(255, 255, 255, 0.1);
+        }
+        
+        [data-theme="blue"] {
+            --glass-bg: rgba(59, 130, 246, 0.2);
+            --glass-border: rgba(59, 130, 246, 0.3);
+            --glass-shadow: 0 8px 32px 0 rgba(59, 130, 246, 0.3);
+            --backdrop-blur: blur(10px);
+            --text-primary: #1e40af;
+            --text-secondary: #3b82f6;
+            --text-accent: #1d4ed8;
+            --accent-gradient: linear-gradient(135deg, #3b82f6 0%, #1e40af 100%);
+            --bg-gradient: linear-gradient(135deg, #dbeafe 0%, #bfdbfe 100%);
+            --surface-glass: rgba(59, 130, 246, 0.1);
+            --border-glass: rgba(59, 130, 246, 0.2);
+        }
+        
+        [data-theme="green"] {
+            --glass-bg: rgba(16, 185, 129, 0.2);
+            --glass-border: rgba(16, 185, 129, 0.3);
+            --glass-shadow: 0 8px 32px 0 rgba(16, 185, 129, 0.3);
+            --backdrop-blur: blur(10px);
+            --text-primary: #065f46;
+            --text-secondary: #047857;
+            --text-accent: #10b981;
+            --accent-gradient: linear-gradient(135deg, #10b981 0%, #047857 100%);
+            --bg-gradient: linear-gradient(135deg, #d1fae5 0%, #a7f3d0 100%);
+            --surface-glass: rgba(16, 185, 129, 0.1);
+            --border-glass: rgba(16, 185, 129, 0.2);
+        }
+        
+        /* ガラスモーフィズムの基本スタイル */
+        body {
+            background: var(--bg-gradient);
+            background-attachment: fixed;
+            color: var(--text-primary);
+            transition: all 0.3s ease;
+            min-height: 100vh;
+            position: relative;
+            overflow-x: hidden;
+        }
+        
+        body::before {
+            content: '';
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: 
+                radial-gradient(circle at 20% 80%, rgba(120, 119, 198, 0.3) 0%, transparent 50%),
+                radial-gradient(circle at 80% 20%, rgba(255, 119, 198, 0.3) 0%, transparent 50%),
+                radial-gradient(circle at 40% 40%, rgba(120, 219, 255, 0.3) 0%, transparent 50%);
+            z-index: -1;
+            animation: float 20s ease-in-out infinite;
+        }
+        
+        @keyframes float {
+            0%, 100% { transform: translateY(0px) rotate(0deg); }
+            33% { transform: translateY(-20px) rotate(1deg); }
+            66% { transform: translateY(20px) rotate(-1deg); }
+        }
+        
+        .glass-card {
+            background: var(--glass-bg);
+            backdrop-filter: var(--backdrop-blur);
+            -webkit-backdrop-filter: var(--backdrop-blur);
+            border-radius: 20px;
+            border: 1px solid var(--glass-border);
+            box-shadow: var(--glass-shadow);
+            position: relative;
+            overflow: hidden;
+        }
+        
+        .glass-card::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 1px;
+            background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.4), transparent);
+        }
+        
+        .theme-bg-secondary {
+            background: var(--glass-bg);
+            backdrop-filter: var(--backdrop-blur);
+            -webkit-backdrop-filter: var(--backdrop-blur);
+            border: 1px solid var(--glass-border);
+            color: var(--text-primary);
+        }
+        
+        .theme-border {
+            border-color: var(--border-glass);
+        }
+        
+        .theme-shadow {
+            box-shadow: var(--glass-shadow);
+        }
+        
+        .theme-text-secondary {
+            color: var(--text-secondary);
+        }
+        
+        .theme-text-accent {
+            color: var(--text-accent);
+        }
+        
+        .theme-bg-accent {
+            background: var(--accent-gradient);
+        }
+        
+        /* ガラスモーフィズムボタンスタイル */
+        .glass-button {
+            background: var(--surface-glass);
+            backdrop-filter: var(--backdrop-blur);
+            -webkit-backdrop-filter: var(--backdrop-blur);
+            border: 1px solid var(--border-glass);
+            border-radius: 16px;
+            padding: 12px 24px;
+            color: var(--text-primary);
+            font-weight: 600;
+            transition: all 0.3s ease;
+            position: relative;
+            overflow: hidden;
+        }
+        
+        .glass-button::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: -100%;
+            width: 100%;
+            height: 100%;
+            background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.2), transparent);
+            transition: left 0.5s;
+        }
+        
+        .glass-button:hover::before {
+            left: 100%;
+        }
+        
+        .glass-button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 25px rgba(0, 0, 0, 0.15);
+            border-color: rgba(255, 255, 255, 0.3);
+        }
+        
+        /* テーマ選択ボタン */
+        .theme-selector {
+            position: fixed;
+            top: 24px;
+            right: 24px;
+            z-index: 1000;
+            display: flex;
+            gap: 0.5rem;
+            background: var(--glass-bg);
+            backdrop-filter: var(--backdrop-blur);
+            -webkit-backdrop-filter: var(--backdrop-blur);
+            padding: 8px;
+            border-radius: 20px;
+            border: 1px solid var(--glass-border);
+            box-shadow: var(--glass-shadow);
+        }
+        
+        .theme-btn {
+            width: 36px;
+            height: 36px;
+            border-radius: 50%;
+            border: 2px solid transparent;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            position: relative;
+            overflow: hidden;
+        }
+        
+        .theme-btn::after {
+            content: '';
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            width: 0;
+            height: 0;
+            background: rgba(255, 255, 255, 0.3);
+            border-radius: 50%;
+            transform: translate(-50%, -50%);
+            transition: all 0.3s ease;
+        }
+        
+        .theme-btn:hover::after {
+            width: 100%;
+            height: 100%;
+        }
+        
+        .theme-btn.active {
+            border-color: rgba(255, 255, 255, 0.6);
+            transform: scale(1.1);
+            box-shadow: 0 0 20px rgba(255, 255, 255, 0.3);
+        }
+        
+        .theme-btn:hover {
+            transform: scale(1.05);
+        }
+        
+        .theme-btn.light {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        }
+        
+        .theme-btn.dark {
+            background: linear-gradient(135deg, #0f172a 0%, #1e1b4b 100%);
+        }
+        
+        .theme-btn.blue {
+            background: linear-gradient(135deg, #3b82f6 0%, #1e40af 100%);
+        }
+        
+        .theme-btn.green {
+            background: linear-gradient(135deg, #10b981 0%, #047857 100%);
+        }
+        
+        /* アニメーション効果 */
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(20px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        
+        @keyframes slideIn {
+            from { transform: translateX(-100%); opacity: 0; }
+            to { transform: translateX(0); opacity: 1; }
+        }
+        
+        @keyframes pulse {
+            0%, 100% { transform: scale(1); }
+            50% { transform: scale(1.05); }
+        }
+        
+        @keyframes bounce {
+            0%, 20%, 53%, 80%, 100% { transform: translateY(0); }
+            40%, 43% { transform: translateY(-10px); }
+            70% { transform: translateY(-5px); }
+        }
+        
+        .animate-fade-in {
+            animation: fadeIn 0.5s ease-out;
+        }
+        
+        .animate-slide-in {
+            animation: slideIn 0.6s ease-out;
+        }
+        
+        .animate-pulse {
+            animation: pulse 2s infinite;
+        }
+        
+        .animate-bounce {
+            animation: bounce 1s ease-in-out;
+        }
+        
+        /* ガラスモーフィズムボタンのホバーアニメーション */
+        .btn-hover {
+            background: var(--surface-glass);
+            backdrop-filter: var(--backdrop-blur);
+            -webkit-backdrop-filter: var(--backdrop-blur);
+            border: 1px solid var(--border-glass);
+            transition: all 0.3s ease;
+            position: relative;
+            overflow: hidden;
+        }
+        
+        .btn-hover::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: -100%;
+            width: 100%;
+            height: 100%;
+            background: linear-gradient(90deg, transparent, rgba(255,255,255,0.3), transparent);
+            transition: left 0.5s;
+        }
+        
+        .btn-hover:hover::before {
+            left: 100%;
+        }
+        
+        .btn-hover:hover {
+            transform: translateY(-3px);
+            box-shadow: 0 15px 35px rgba(0,0,0,0.2);
+            border-color: rgba(255, 255, 255, 0.4);
+        }
+        
+        /* ガラスセクションのホバーアニメーション */
+        .section-hover {
+            transition: all 0.3s ease;
+            position: relative;
+        }
+        
+        .section-hover:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 25px 50px rgba(0,0,0,0.15);
+        }
+        
+        .section-hover::after {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: linear-gradient(135deg, rgba(255,255,255,0.1) 0%, transparent 50%);
+            opacity: 0;
+            transition: opacity 0.3s ease;
+            pointer-events: none;
+            border-radius: inherit;
+        }
+        
+        .section-hover:hover::after {
+            opacity: 1;
+        }
+        
+        /* ローディングアニメーション */
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        
+        .loading-spinner {
+            display: inline-block;
+            width: 20px;
+            height: 20px;
+            border: 3px solid var(--border-color);
+            border-radius: 50%;
+            border-top-color: var(--bg-accent);
+            animation: spin 1s ease-in-out infinite;
+        }
+        
+        @media (max-width: 480px) {
+            .container {
+                padding: 0.25rem !important;
+            }
+            
+            .text-4xl {
+                font-size: 1.5rem !important;
+            }
+            
+            .text-2xl {
+                font-size: 1rem !important;
+            }
+            
+            .py-3.px-6 {
+                padding: 0.375rem 0.75rem !important;
+            }
+            
+            .aspect-video {
+                max-height: 200px;
+            }
+            
+            .h-48 {
+                height: 150px !important;
+            }
         }
 
     /* スライダーのつまみのスタイル */
@@ -43,7 +493,8 @@
     }
     
     .container {
-        max-width: 900px;
+        max-width: 1200px;
+        width: 100%;
     }
 
     h1, h2, h3 {
@@ -58,25 +509,46 @@
 
 </head>
 
-<body class="bg-gradient-to-br from-orange-100 via-amber-100 to-yellow-100 text-gray-800 p-4 min-h-screen flex items-center justify-center">
-    <div class="container mx-auto bg-white bg-opacity-70 p-6 rounded-xl shadow-2xl w-full">
+<body class="p-2 sm:p-4 min-h-screen flex items-center justify-center">
+    <!-- テーマ選択ボタン -->
+    <div class="theme-selector">
+        <button class="theme-btn light active" data-theme="light" title="ライトテーマ"></button>
+        <button class="theme-btn dark" data-theme="dark" title="ダークテーマ"></button>
+        <button class="theme-btn blue" data-theme="blue" title="ブルーテーマ"></button>
+        <button class="theme-btn green" data-theme="green" title="グリーンテーマ"></button>
+    </div>
+    
+    <div class="container mx-auto glass-card p-3 sm:p-6 w-full max-w-full">
         <header class="text-center mb-8">
-            <h1 class="text-4xl font-bold text-orange-600">バドミントン動作分析</h1>
-            <p class="text-gray-600 mt-1">動画から選手の動きを捉え、軌跡とヒートマップで可視化します。</p>
+            <h1 class="text-4xl font-bold theme-text-accent">バドミントン動作分析</h1>
+            <p class="theme-text-secondary mt-1">動画から選手の動きを捉え、軌跡とヒートマップで可視化します。</p>
         </header>
 
 <!-- Section 1: Video Upload and Display -->
-    <section class="mb-8 p-4 border border-orange-200 rounded-lg bg-white/50">
-        <h2 class="text-2xl font-semibold mb-3 text-orange-500">1. 動画の準備</h2>
+    <section class="mb-8 p-4 glass-card section-hover animate-fade-in">
+        <h2 class="text-2xl font-semibold mb-3 theme-text-accent">1. 動画の準備 
+            <button id="helpButton" class="ml-2 text-sm glass-button px-2 py-1">?</button>
+        </h2>
         <input type="file" id="fileInput" accept="video/*" class="block w-full text-sm text-slate-500
           file:mr-4 file:py-2 file:px-4
           file:rounded-lg file:border-0
           file:text-sm file:font-semibold
           file:bg-orange-100 file:text-orange-700
           hover:file:bg-orange-200 disabled:opacity-50 transition-colors" disabled>
-        <p id="loadingTxt" class="text-sm text-gray-500 mt-2">AIモデルを読み込んでいます... 初回は数秒～数十秒かかることがあります。</p>
+        <!-- プログレスバー -->
+        <div id="progressContainer" class="hidden mb-4">
+            <div class="flex justify-between text-sm theme-text-secondary mb-1">
+                <span id="progressLabel">処理中...</span>
+                <span id="progressPercent">0%</span>
+            </div>
+            <div class="w-full bg-gray-200 rounded-full h-2.5">
+                <div id="progressBar" class="theme-bg-accent h-2.5 rounded-full transition-all duration-300" style="width: 0%"></div>
+            </div>
+        </div>
         
-        <div id="videoContainer" class="mt-4 grid grid-cols-1 md:grid-cols-2 gap-4 items-start">
+        <p id="loadingTxt" class="text-sm theme-text-secondary mt-2">AIモデルを読み込んでいます... 初回は数秒～数十秒かかることがあります。</p>
+        
+        <div id="videoContainer" class="mt-4 grid grid-cols-1 lg:grid-cols-2 gap-4 items-start">
             <div>
                 <h3 class="text-lg font-medium text-gray-700 mb-1">オリジナル動画</h3>
                 <video id="video" controls class="w-full rounded-md shadow-md aspect-video hidden bg-gray-200"></video>
@@ -92,33 +564,49 @@
     </section>
 
     <!-- Section 2: Recording Controls -->
-    <section class="mb-8 p-4 border border-orange-200 rounded-lg text-center bg-white/50">
-        <h2 class="text-2xl font-semibold mb-3 text-orange-500">2. 録画と座標取得</h2>
-        <button id="startButton" class="bg-orange-500 hover:bg-orange-600 text-white font-bold py-3 px-6 rounded-lg shadow-md disabled:opacity-50 transition-transform hover:scale-105" disabled>録画開始</button>
-        <button id="stopButton" class="bg-red-500 hover:bg-red-600 text-white font-bold py-3 px-6 rounded-lg shadow-md disabled:opacity-50 ml-2 transition-transform hover:scale-105" disabled>録画停止</button>
-        <a id="downloadLink" href="#" download="badminton_analysis.webm" class="hidden mt-4 inline-block bg-green-500 hover:bg-green-600 text-white font-bold py-3 px-6 rounded-lg shadow-md transition-transform hover:scale-105">録画をダウンロード</a>
+    <section class="mb-8 p-4 glass-card text-center section-hover animate-fade-in">
+        <h2 class="text-2xl font-semibold mb-3 theme-text-accent">2. 録画と座標取得</h2>
+        <div class="flex flex-wrap justify-center gap-2">
+            <button id="startButton" class="glass-button disabled:opacity-50" disabled>録画開始</button>
+            <button id="stopButton" class="glass-button disabled:opacity-50" disabled>録画停止</button>
+            <a id="downloadLink" href="#" download="badminton_analysis.webm" class="hidden glass-button">録画をダウンロード</a>
+        </div>
     </section>
 
     <!-- Section 3: Movement Analysis -->
-    <section id="analysisSection" class="mb-6 p-4 border border-orange-200 rounded-lg hidden bg-white/50">
-        <h2 class="text-2xl font-semibold mb-3 text-orange-500">3. 移動・ショット分析結果</h2>
+    <section id="analysisSection" class="mb-6 p-4 glass-card hidden section-hover animate-slide-in">
+        <h2 class="text-2xl font-semibold mb-3 theme-text-accent">3. 移動・ショット分析結果</h2>
         
-        <div id="correctionControls" class="mb-4 p-4 border border-indigo-200 rounded-lg bg-white/50">
-            <h3 class="text-xl font-semibold mb-2 text-indigo-500">座標の補正</h3>
-            <p class="text-sm text-gray-600 mb-3">動画内のコートの歪みを補正し、より正確な軌跡を表示します。</p>
-            <button id="startCropButton" class="bg-indigo-500 hover:bg-indigo-600 text-white font-bold py-2 px-4 rounded-lg shadow-md transition-transform hover:scale-105">コートに合わせてトリミング</button>
-            <button id="applyCorrectionButton" class="bg-teal-500 hover:bg-teal-600 text-white font-bold py-2 px-4 rounded-lg shadow-md ml-2 hidden">補正を適用</button>
-            <button id="resetCorrectionButton" class="bg-gray-400 hover:bg-gray-500 text-white font-bold py-2 px-4 rounded-lg shadow-md ml-2 hidden">補正をリセット</button>
+        <div id="correctionControls" class="mb-4 p-4 glass-card">
+            <h3 class="text-xl font-semibold mb-2 theme-text-accent">座標の補正</h3>
+            <p class="text-sm theme-text-secondary mb-3">動画内のコートの歪みを補正し、より正確な軌跡を表示します。</p>
+            <button id="startCropButton" class="glass-button">コートに合わせてトリミング</button>
+            <button id="applyCorrectionButton" class="glass-button ml-2 hidden">補正を適用</button>
+            <button id="resetCorrectionButton" class="glass-button ml-2 hidden">補正をリセット</button>
             <p id="cropInstructions" class="text-sm text-indigo-700 mt-2 hidden">コートの四隅をドラッグして調整してください。</p>
         </div>
 
-        <button id="analyzeButton" class="bg-blue-500 hover:bg-blue-600 text-white font-bold py-3 px-6 rounded-lg shadow-md w-full mb-4 transition-transform hover:scale-105">分析を開始・更新</button>
+        <button id="analyzeButton" class="glass-button w-full mb-4">分析を開始・更新</button>
 
         <div id="visualizationControls" class="mt-4 hidden">
+            <!-- ショット閾値調整 -->
+            <div class="mb-4 p-4 glass-card">
+                <h3 class="text-lg font-semibold mb-2 theme-text-accent">ショット検出設定</h3>
+                <div class="mb-3">
+                    <label for="thresholdSlider" class="block mb-1 text-sm font-medium theme-text-secondary">速度閾値 (ピクセル/秒): <span id="thresholdValue">5000</span></label>
+                    <input type="range" id="thresholdSlider" min="500" max="10000" value="5000" step="100" class="w-full h-3 bg-orange-200 rounded-lg appearance-none cursor-pointer">
+                    <div class="flex justify-between text-xs theme-text-secondary mt-1">
+                        <span>500</span>
+                        <span>10000</span>
+                    </div>
+                </div>
+                <button id="updateThresholdButton" class="glass-button">閾値を更新</button>
+            </div>
+            
             <div class="mb-4">
-                <label for="timeSlider" class="block mb-1 text-sm font-medium text-gray-700">表示する時間範囲 (スライダーで調整):</label>
+                <label for="timeSlider" class="block mb-1 text-sm font-medium theme-text-secondary">表示する時間範囲 (スライダーで調整):</label>
                 <input type="range" id="timeSlider" min="0" max="100" value="100" step="0.1" class="w-full h-3 bg-orange-200 rounded-lg appearance-none cursor-pointer">
-                <div class="flex justify-between text-xs text-gray-500 mt-1">
+                <div class="flex justify-between text-xs theme-text-secondary mt-1">
                     <span id="sliderMinTime">0.0s</span>
                     <span id="sliderCurrentTimeLabel" class="font-semibold">現在: <span id="sliderCurrentTime">0.0s</span></span>
                     <span id="sliderMaxTime">0.0s</span>
@@ -126,23 +614,34 @@
             </div>
             
             <!-- *** ADDED *** Shot shortcut buttons container -->
-            <div id="shotButtonsContainer" class="mt-2 flex flex-wrap items-center gap-2"></div>
+            <div id="shotButtonsContainer" class="mt-2 mb-6 flex flex-wrap items-center gap-2"></div>
+            
+            <!-- エクスポート機能 -->
+            <div class="mb-4 p-4 glass-card">
+                <h3 class="text-lg font-semibold mb-2 theme-text-accent">データエクスポート</h3>
+                <div class="flex flex-wrap gap-2">
+                    <button id="exportJSONButton" class="glass-button">JSON形式でエクスポート</button>
+                    <button id="exportCSVButton" class="glass-button">CSV形式でエクスポート</button>
+                    <button id="exportImageButton" class="glass-button">画像をエクスポート</button>
+                    <button id="generateReportButton" class="glass-button">レポート生成</button>
+                </div>
+            </div>
 
-            <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mt-4">
+            <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mt-4">
                 <div>
-                    <h3 class="text-xl font-semibold mb-2 text-orange-500">移動軌跡</h3>
-                    <p class="text-xs text-gray-500 mb-1">青: 左足首, 赤: 右足首</p>
+                    <h3 class="text-xl font-semibold mb-2 theme-text-accent">移動軌跡</h3>
+                    <p class="text-xs theme-text-secondary mb-1">青: 左足首, 赤: 右足首</p>
                     <canvas id="trajectoryCanvas" class="w-full aspect-[1340/610] analysis-canvas rounded-md shadow"></canvas>
                 </div>
                 <div>
-                    <h3 class="text-xl font-semibold mb-2 text-orange-500">ヒートマップ</h3>
-                    <p class="text-xs text-gray-500 mb-1">滞在頻度が高いほど赤く表示</p>
+                    <h3 class="text-xl font-semibold mb-2 theme-text-accent">ヒートマップ</h3>
+                    <p class="text-xs theme-text-secondary mb-1">滞在頻度が高いほど赤く表示</p>
                     <canvas id="heatmapCanvas" class="w-full aspect-[1340/610] analysis-canvas rounded-md shadow"></canvas>
                 </div>
                 <!-- *** ADDED *** Wrist Velocity Analysis -->
-                <div id="wristAnalysisContainer" class="md:col-span-2 hidden">
-                    <h3 class="text-xl font-semibold mb-2 text-orange-500">手首の速度</h3>
-                    <p class="text-xs text-gray-500 mb-1">青: 左手首, 赤: 右手首。赤い点線はショット判定の速度閾値。</p>
+                <div id="wristAnalysisContainer" class="lg:col-span-2 hidden">
+                    <h3 class="text-xl font-semibold mb-2 theme-text-accent">手首の速度</h3>
+                    <p class="text-xs theme-text-secondary mb-1">青: 左手首, 赤: 右手首。赤い点線はショット判定の速度閾値。</p>
                     <canvas id="wristVelocityCanvas" class="w-full h-48 analysis-canvas rounded-md shadow"></canvas>
                 </div>
             </div>
@@ -186,6 +685,17 @@
     const wristAnalysisContainer = document.getElementById('wristAnalysisContainer');
     const wristVelocityCanvas = document.getElementById('wristVelocityCanvas');
     const shotButtonsContainer = document.getElementById('shotButtonsContainer');
+    
+    // *** ADDED *** DOM Elements for Threshold Control
+    const thresholdSlider = document.getElementById('thresholdSlider');
+    const thresholdValue = document.getElementById('thresholdValue');
+    const updateThresholdButton = document.getElementById('updateThresholdButton');
+    
+    // *** ADDED *** DOM Elements for Export Functions
+    const exportJSONButton = document.getElementById('exportJSONButton');
+    const exportCSVButton = document.getElementById('exportCSVButton');
+    const exportImageButton = document.getElementById('exportImageButton');
+    const generateReportButton = document.getElementById('generateReportButton');
 
     // Canvas Contexts
     let ctxPose = poseCanvas.getContext('2d');
@@ -223,8 +733,7 @@
     const COURT_WIDTH = 610;
     const COURT_LENGTH = 1340;
     // *** ADDED *** Threshold for shot detection (pixels/second). Needs tuning.
-    const SHOT_VELOCITY_THRESHOLD = 5000; 
-    // const SHOT_VELOCITY_THRESHOLD = 1500; 
+    let SHOT_VELOCITY_THRESHOLD = 5000; // Made this variable to allow dynamic updates 
 
     async function initPoseLandmarker() {
         try {
@@ -449,6 +958,57 @@
 
         drawAnalysis(parseFloat(timeSlider.value));
         loadingTxt.textContent = "移動分析とショット分析の結果を表示しています。";
+    });
+
+    // テーマ切り替え機能
+    document.querySelectorAll('.theme-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+            document.querySelectorAll('.theme-btn').forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
+            const theme = btn.dataset.theme;
+            if (theme === 'light') {
+                document.documentElement.removeAttribute('data-theme');
+            } else {
+                document.documentElement.setAttribute('data-theme', theme);
+            }
+            // テーマ設定を保存
+            localStorage.setItem('badminton-theme', theme);
+        });
+    });
+
+    // ページ読み込み時にテーマを復元
+    document.addEventListener('DOMContentLoaded', () => {
+        const savedTheme = localStorage.getItem('badminton-theme') || 'light';
+        if (savedTheme !== 'light') {
+            document.documentElement.setAttribute('data-theme', savedTheme);
+        }
+        document.querySelectorAll('.theme-btn').forEach(b => b.classList.remove('active'));
+        document.querySelector(`[data-theme="${savedTheme}"]`).classList.add('active');
+        
+        // アニメーション追加
+        setTimeout(() => {
+            document.querySelectorAll('section:not(.hidden)').forEach((section, index) => {
+                section.style.animationDelay = `${index * 0.2}s`;
+            });
+        }, 100);
+    });
+    
+    // *** ADDED *** Threshold control event listeners
+    thresholdSlider.addEventListener('input', () => {
+        thresholdValue.textContent = thresholdSlider.value;
+    });
+    
+    updateThresholdButton.addEventListener('click', () => {
+        SHOT_VELOCITY_THRESHOLD = parseInt(thresholdSlider.value);
+        // Re-run shot detection with new threshold
+        if (wristPositions.length > 0 || correctedWristPositions.length > 0) {
+            const wristData = isCorrectionApplied ? correctedWristPositions : wristPositions;
+            const velocities = calculateWristVelocities(wristData, isCorrectionApplied);
+            shotTimes = detectShots(velocities, SHOT_VELOCITY_THRESHOLD);
+            createShotButtons(shotTimes);
+            drawAnalysis(parseFloat(timeSlider.value));
+            loadingTxt.textContent = `ショット検出閾値を ${SHOT_VELOCITY_THRESHOLD} に更新しました。`;
+        }
     });
     
     timeSlider.addEventListener('input', () => {
@@ -690,7 +1250,7 @@
 
         shots.forEach((time, index) => {
             const button = document.createElement('button');
-            button.className = 'bg-teal-500 hover:bg-teal-600 text-white text-xs font-bold py-1 px-2 rounded-md shadow-sm transition-transform hover:scale-105';
+            button.className = 'glass-button text-xs py-1 px-2 transition-transform hover:scale-105';
             button.textContent = `ショット ${index + 1} (${time.toFixed(1)}s)`;
             button.dataset.time = time;
             button.addEventListener('click', () => {
@@ -704,6 +1264,282 @@
         });
     }
 
+    // *** ADDED *** Export Functions
+    function downloadFile(content, filename, contentType) {
+        const blob = new Blob([content], { type: contentType });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = filename;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        URL.revokeObjectURL(url);
+    }
+
+    function exportToJSON() {
+        const data = {
+            timestamp: new Date().toISOString(),
+            videoDuration: videoDuration,
+            shotVelocityThreshold: SHOT_VELOCITY_THRESHOLD,
+            anklePositions: isCorrectionApplied ? correctedAnklePositions : anklePositions,
+            wristPositions: isCorrectionApplied ? correctedWristPositions : wristPositions,
+            shotTimes: shotTimes,
+            correctionApplied: isCorrectionApplied,
+            homographyMatrix: homographyMatrix
+        };
+        
+        const jsonString = JSON.stringify(data, null, 2);
+        downloadFile(jsonString, 'badminton_analysis.json', 'application/json');
+        loadingTxt.textContent = "JSONファイルをエクスポートしました。";
+    }
+
+    function exportToCSV() {
+        const ankleData = isCorrectionApplied ? correctedAnklePositions : anklePositions;
+        const wristData = isCorrectionApplied ? correctedWristPositions : wristPositions;
+        
+        let csvContent = "Time,LeftAnkleX,LeftAnkleY,RightAnkleX,RightAnkleY,LeftWristX,LeftWristY,RightWristX,RightWristY\n";
+        
+        const maxLength = Math.max(ankleData.length, wristData.length);
+        for (let i = 0; i < maxLength; i++) {
+            const ankle = ankleData[i] || {};
+            const wrist = wristData[i] || {};
+            const time = ankle.time || wrist.time || '';
+            
+            csvContent += `${time},`;
+            csvContent += `${ankle.leftAnkle?.x || ''},${ankle.leftAnkle?.y || ''},`;
+            csvContent += `${ankle.rightAnkle?.x || ''},${ankle.rightAnkle?.y || ''},`;
+            csvContent += `${wrist.leftWrist?.x || ''},${wrist.leftWrist?.y || ''},`;
+            csvContent += `${wrist.rightWrist?.x || ''},${wrist.rightWrist?.y || ''}\n`;
+        }
+        
+        downloadFile(csvContent, 'badminton_analysis.csv', 'text/csv');
+        loadingTxt.textContent = "CSVファイルをエクスポートしました。";
+    }
+
+    function exportImages() {
+        const images = [];
+        
+        // Export trajectory canvas
+        trajectoryCanvas.toBlob((blob) => {
+            images.push({ name: 'trajectory.png', blob });
+            
+            // Export heatmap canvas
+            heatmapCanvas.toBlob((blob2) => {
+                images.push({ name: 'heatmap.png', blob: blob2 });
+                
+                // Export wrist velocity chart
+                wristVelocityCanvas.toBlob((blob3) => {
+                    images.push({ name: 'wrist_velocity.png', blob: blob3 });
+                    
+                    // Download each image separately
+                    images.forEach((img, index) => {
+                        setTimeout(() => {
+                            const url = URL.createObjectURL(img.blob);
+                            const link = document.createElement('a');
+                            link.href = url;
+                            link.download = img.name;
+                            document.body.appendChild(link);
+                            link.click();
+                            document.body.removeChild(link);
+                            URL.revokeObjectURL(url);
+                        }, index * 500);
+                    });
+                    loadingTxt.textContent = "画像ファイルをエクスポートしました。";
+                });
+            });
+        });
+    }
+
+    function generateReport() {
+        const ankleData = isCorrectionApplied ? correctedAnklePositions : anklePositions;
+        const wristData = isCorrectionApplied ? correctedWristPositions : wristPositions;
+        
+        const report = `バドミントン動作分析レポート
+=====================================
+
+分析日時: ${new Date().toLocaleString('ja-JP')}
+動画時間: ${videoDuration.toFixed(2)}秒
+ショット検出閾値: ${SHOT_VELOCITY_THRESHOLD} ピクセル/秒
+座標補正: ${isCorrectionApplied ? '適用済み' : '未適用'}
+
+分析結果:
+---------
+記録された足首位置データ: ${ankleData.length}ポイント
+記録された手首位置データ: ${wristData.length}ポイント
+検出されたショット数: ${shotTimes.length}回
+
+ショット時刻:
+${shotTimes.map((time, i) => `  ショット${i + 1}: ${time.toFixed(2)}秒`).join('\n')}
+
+統計情報:
+---------
+最初の記録時刻: ${ankleData.length > 0 ? ankleData[0].time.toFixed(2) : 'N/A'}秒
+最後の記録時刻: ${ankleData.length > 0 ? ankleData[ankleData.length - 1].time.toFixed(2) : 'N/A'}秒
+平均ショット間隔: ${shotTimes.length > 1 ? ((shotTimes[shotTimes.length - 1] - shotTimes[0]) / (shotTimes.length - 1)).toFixed(2) : 'N/A'}秒
+
+注意: このレポートは自動生成されたものです。
+詳細な分析については専門家にご相談ください。
+`;
+
+        downloadFile(report, 'badminton_analysis_report.txt', 'text/plain');
+        loadingTxt.textContent = "分析レポートを生成しました。";
+    }
+
+    // Export button event listeners
+    exportJSONButton.addEventListener('click', exportToJSON);
+    exportCSVButton.addEventListener('click', exportToCSV);
+    exportImageButton.addEventListener('click', exportImages);
+    generateReportButton.addEventListener('click', generateReport);
+
+    // *** ADDED *** Help Modal Functions
+    const helpModal = document.getElementById('helpModal');
+    const helpButton = document.getElementById('helpButton');
+    const closeHelpModal = document.getElementById('closeHelpModal');
+    
+    function showHelpModal() {
+        helpModal.classList.remove('hidden');
+        document.body.style.overflow = 'hidden';
+    }
+    
+    function hideHelpModal() {
+        helpModal.classList.add('hidden');
+        document.body.style.overflow = '';
+    }
+    
+    helpButton.addEventListener('click', showHelpModal);
+    closeHelpModal.addEventListener('click', hideHelpModal);
+    helpModal.addEventListener('click', (e) => {
+        if (e.target === helpModal) hideHelpModal();
+    });
+    
+    // *** ADDED *** Keyboard Shortcuts
+    document.addEventListener('keydown', (e) => {
+        // Skip if user is typing in an input field
+        if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+        
+        switch(e.key.toLowerCase()) {
+            case ' ': // Space - Start/Stop recording
+                e.preventDefault();
+                if (!startButton.disabled) {
+                    startButton.click();
+                } else if (!stopButton.disabled) {
+                    stopButton.click();
+                }
+                break;
+            case 'a': // A - Analyze
+                e.preventDefault();
+                if (!analyzeButton.disabled) {
+                    analyzeButton.click();
+                }
+                break;
+            case 'h': // H - Help
+                e.preventDefault();
+                showHelpModal();
+                break;
+            case 't': // T - Theme toggle
+                e.preventDefault();
+                const currentTheme = document.documentElement.getAttribute('data-theme') || 'light';
+                const themes = ['light', 'dark', 'blue', 'green'];
+                const currentIndex = themes.indexOf(currentTheme);
+                const nextTheme = themes[(currentIndex + 1) % themes.length];
+                
+                if (nextTheme === 'light') {
+                    document.documentElement.removeAttribute('data-theme');
+                } else {
+                    document.documentElement.setAttribute('data-theme', nextTheme);
+                }
+                localStorage.setItem('badminton-theme', nextTheme);
+                
+                document.querySelectorAll('.theme-btn').forEach(b => b.classList.remove('active'));
+                document.querySelector(`[data-theme="${nextTheme}"]`).classList.add('active');
+                break;
+            case 'e': // E - Export JSON
+                e.preventDefault();
+                if (anklePositions.length > 0 || wristPositions.length > 0) {
+                    exportToJSON();
+                }
+                break;
+            case 'r': // R - Generate Report
+                e.preventDefault();
+                if (anklePositions.length > 0 || wristPositions.length > 0) {
+                    generateReport();
+                }
+                break;
+            case 'escape': // Escape - Close modal
+                e.preventDefault();
+                hideHelpModal();
+                break;
+        }
+    });
+
 </script>
+
+<!-- ヘルプモーダル -->
+<div id="helpModal" class="fixed inset-0 bg-black bg-opacity-50 z-50 hidden flex items-center justify-center p-4">
+    <div class="glass-card max-w-2xl w-full max-h-[90vh] overflow-y-auto p-6">
+        <div class="flex justify-between items-center mb-4">
+            <h2 class="text-2xl font-bold theme-text-accent">使い方ガイド</h2>
+            <button id="closeHelpModal" class="theme-text-secondary hover:theme-text-primary transition-colors">
+                <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+                </svg>
+            </button>
+        </div>
+        
+        <div class="space-y-6">
+            <div>
+                <h3 class="text-lg font-semibold theme-text-accent mb-2">基本的な使い方</h3>
+                <ol class="list-decimal list-inside space-y-2 theme-text-secondary text-sm">
+                    <li>動画ファイルを選択してアップロード</li>
+                    <li>「録画開始」ボタンで姿勢推定を開始</li>
+                    <li>動画終了後、「分析を開始」で軌跡とヒートマップを表示</li>
+                    <li>必要に応じてデータをエクスポート</li>
+                </ol>
+            </div>
+            
+            <div>
+                <h3 class="text-lg font-semibold theme-text-accent mb-2">キーボードショートカット</h3>
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-2 text-sm theme-text-secondary">
+                    <div><kbd class="glass-button text-xs px-2 py-1">Space</kbd> 録画開始/停止</div>
+                    <div><kbd class="glass-button text-xs px-2 py-1">A</kbd> 分析開始</div>
+                    <div><kbd class="glass-button text-xs px-2 py-1">H</kbd> ヘルプを表示</div>
+                    <div><kbd class="glass-button text-xs px-2 py-1">T</kbd> テーマ切り替え</div>
+                    <div><kbd class="glass-button text-xs px-2 py-1">E</kbd> JSONエクスポート</div>
+                    <div><kbd class="glass-button text-xs px-2 py-1">R</kbd> レポート生成</div>
+                </div>
+            </div>
+            
+            <div>
+                <h3 class="text-lg font-semibold theme-text-accent mb-2">機能説明</h3>
+                <div class="space-y-3 text-sm theme-text-secondary">
+                    <div>
+                        <strong>姿勢推定:</strong> MediapipeのPoseLandmarkerを使用して、リアルタイムで身体のキーポイントを検出
+                    </div>
+                    <div>
+                        <strong>ショット検出:</strong> 手首の速度から自動的にショットタイミングを判定
+                    </div>
+                    <div>
+                        <strong>コート補正:</strong> 動画内のコートの歪みを補正して正確な軌跡を表示
+                    </div>
+                    <div>
+                        <strong>比較モード:</strong> 2つの動画を同時に分析して比較が可能
+                    </div>
+                </div>
+            </div>
+            
+            <div>
+                <h3 class="text-lg font-semibold theme-text-accent mb-2">注意事項</h3>
+                <ul class="list-disc list-inside space-y-2 theme-text-secondary text-sm">
+                    <li>初回のAIモデル読み込みには時間がかかります</li>
+                    <li>動画の解像度や品質によって検出精度が変わります</li>
+                    <li>明るく、選手が明確に見える動画が推奨されます</li>
+                    <li>エクスポート機能はブラウザのダウンロード設定に依存します</li>
+                </ul>
+            </div>
+        </div>
+    </div>
+</div>
+
 </body>
 </html>
