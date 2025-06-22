@@ -722,13 +722,8 @@
     // let cropPoints = []; → Webstorageから取得するように変更
     let cropPoints = JSON.parse(localStorage.getItem('cropPoints')) || [];
     if (!cropPoints || cropPoints.length !== 4) {
-        // 初期値を設定
-        cropPoints = [
-            { x: 0, y: 0 }, // 左上
-            { x: 1, y: 0 }, // 右上
-            { x: 1, y: 1 }, // 右下
-            { x: 0, y: 1 }  // 左下
-        ];
+        // 初期値は設定しない
+        cropPoints = [];
     }
     let correctedAnklePositions = [];
     let correctedWristPositions = []; // *** ADDED ***
