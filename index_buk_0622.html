@@ -644,7 +644,7 @@
                         <span>10000</span>
                     </div>
                 </div>
-                <!-- <button id="updateThresholdButton" class="glass-button">閾値を更新</button> -->
+                <button id="updateThresholdButton" class="glass-button">閾値を更新</button>
             </div>
         </div>
     </section>
@@ -719,17 +719,7 @@
     // Analysis & Correction State
     const HEATMAP_GRID_SIZE = 25;
     let videoDuration = 0;
-    // let cropPoints = []; → Webstorageから取得するように変更
-    let cropPoints = JSON.parse(localStorage.getItem('cropPoints')) || [];
-    if (!cropPoints || cropPoints.length !== 4) {
-        // 初期値を設定
-        cropPoints = [
-            { x: 0, y: 0 }, // 左上
-            { x: 1, y: 0 }, // 右上
-            { x: 1, y: 1 }, // 右下
-            { x: 0, y: 1 }  // 左下
-        ];
-    }
+    let cropPoints = [];
     let correctedAnklePositions = [];
     let correctedWristPositions = []; // *** ADDED ***
     let shotTimes = []; // *** ADDED ***
@@ -1023,6 +1013,18 @@
         sliderMinTime.textContent = "0.0s";
     });
     
+    updateThresholdButton.addEventListener('click', () => { 
+        SHOT_VELOCITY_THRESHOLD = parseInt(thresholdSlider.value);
+        // Re-run shot detection with new threshold
+        if (wristPositions.length > 0 || correctedWristPositions.length > 0) {
+            const wristData = isCorrectionApplied ? correctedWristPositions : wristPositions;
+            const velocities = calculateWristVelocities(wristData, isCorrectionApplied);
+            shotTimes = detectShots(velocities, SHOT_VELOCITY_THRESHOLD);
+            createShotButtons(shotTimes);
+            drawAnalysis(parseFloat(timeSlider.value));
+            loadingTxt.textContent = `ショット検出閾値を ${SHOT_VELOCITY_THRESHOLD} に更新しました。`;
+        }
+    });
     
     timeSlider.addEventListener('input', () => {
         const currentTime = parseFloat(timeSlider.value);
@@ -1058,34 +1060,27 @@
     }
     
     function drawBadmintonCourt(ctx) {
-// コートの描画
-// バドミントンコートの公式の大きさに則して、サイドライン、センターライン、サービスラインを描画する
-
         const w = ctx.canvas.width;
         const h = ctx.canvas.height;
         ctx.fillStyle = '#f0fdf4';
         ctx.fillRect(0, 0, w, h);
         ctx.strokeStyle = '#4b5563';
         ctx.lineWidth = w / 200;
-        // サイドライン(ダブルス)
-        ctx.strokeRect(w*0.005,h*0.005,w*0.99,h*0.99);
-        // サイドライン(シングルス) |440mm|2550mm|2550mm|440mm|
-        ctx.beginPath(); ctx.moveTo(w * 0.074, h*0.005); ctx.lineTo(w * 0.074, h*0.995); ctx.moveTo(w * 0.926, h*0.005); ctx.lineTo(w * 0.926, h*0.995); ctx.stroke();
-        // サービスライン - 2000mm - 3900mm - 760mm - 
-        ctx.beginPath(); ctx.moveTo(w*0.005, h * 2000/(2000+3900+760)); ctx.lineTo(w*0.995, h * 2000/(2000+3900+760)); ctx.moveTo(w*0.005, h * (2000 + 3900)/(2000+3900+760)); ctx.lineTo(w*0.995, h * (2000 + 3900)/(2000+3900+760)); ctx.stroke();
-        // センターライン 左右のサービスコートを分ける
-        ctx.beginPath(); ctx.moveTo(w / 2, h * 2000/(2000+3900+760)); ctx.lineTo(w / 2, h*0.995);ctx.stroke();
+        ctx.strokeRect(0, 0, w, h);
+        ctx.beginPath(); ctx.moveTo(w / 2, 0); ctx.lineTo(w / 2, h); ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(w*0.05, h/2); ctx.lineTo(w*0.95, h/2); ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(w*0.05, 0); ctx.lineTo(w*0.05, h); ctx.moveTo(w*0.95, 0); ctx.lineTo(w*0.95, h); ctx.moveTo(w/2 + w*0.3, 0); ctx.lineTo(w/2 + w*0.3, h); ctx.moveTo(w/2 - w*0.3, 0); ctx.lineTo(w/2 - w*0.3, h); ctx.stroke();
     }
 
     function drawTrajectory(positions, isCorrected, canvas) { //移動軌跡の描画
         const ctx = canvas.getContext('2d');
         ctx.lineWidth = 4; // 太さを修正。もっと太くして見やすくする
         const getCoords = (pos) => isCorrected ? { x: pos.x, y: pos.y } : { x: pos.x * canvas.width, y: pos.y * canvas.height };
-        ctx.strokeStyle = 'rgba(59, 130, 246, 0.1)'; // 青色の透明度を下げて、軌跡を目立たせる
+        ctx.strokeStyle = 'rgba(59, 130, 246, 0.8)';
         ctx.beginPath();
         positions.forEach((p, i) => { if (p.leftAnkle) { const {x, y} = getCoords(p.leftAnkle); if (i === 0 || !positions[i-1].leftAnkle) ctx.moveTo(x, y); else ctx.lineTo(x, y); } });
         ctx.stroke();
-        ctx.strokeStyle = 'rgba(239, 68, 68, 0.1)'; // 赤色の透明度を下げて、軌跡を目立たせる
+        ctx.strokeStyle = 'rgba(239, 68, 68, 0.8)';
         ctx.beginPath();
         positions.forEach((p, i) => { if (p.rightAnkle) { const {x, y} = getCoords(p.rightAnkle); if (i === 0 || !positions[i-1].rightAnkle) ctx.moveTo(x, y); else ctx.lineTo(x, y); } });
         ctx.stroke();
@@ -1143,27 +1138,12 @@
     }
     
     // --- Cropping and Correction Functions ---
-    function startCroppingMode() { isCroppingMode = true; cropOverlayCanvas.classList.remove('hidden'); cropInstructions.classList.remove('hidden'); applyCorrectionButton.classList.remove('hidden'); resetCorrectionButton.classList.remove('hidden'); 
-    const w = cropOverlayCanvas.width, h = cropOverlayCanvas.height, mX = w * 0.15, mY = h * 0.15;
-    // cropPointがからの場合のみ、初期化
-     if (!cropPoints || cropPoints.length !== 4) {
-         // 初期のトリミングポイントを設定
-    cropPoints = [{ x: mX, y: mY }, { x: w - mX, y: mY }, { x: w - mX, y: h - mY }, { x: mX, y: h - mY }]; 
-     }
-     drawCropOverlay();
-     }
+    function startCroppingMode() { isCroppingMode = true; cropOverlayCanvas.classList.remove('hidden'); cropInstructions.classList.remove('hidden'); applyCorrectionButton.classList.remove('hidden'); resetCorrectionButton.classList.remove('hidden'); const w = cropOverlayCanvas.width, h = cropOverlayCanvas.height, mX = w * 0.15, mY = h * 0.15; cropPoints = [{ x: mX, y: mY }, { x: w - mX, y: mY }, { x: w - mX, y: h - mY }, { x: mX, y: h - mY }]; drawCropOverlay(); }
     function stopCroppingMode() { isCroppingMode = false; isDragging = false; draggedPointIndex = -1; cropOverlayCanvas.classList.add('hidden'); cropInstructions.classList.add('hidden'); applyCorrectionButton.classList.add('hidden'); resetCorrectionButton.classList.add('hidden');}
     startCropButton.addEventListener('click', () => { if (isCroppingMode) { stopCroppingMode(); startCropButton.textContent = "コートに合わせてトリミング"; } else { startCroppingMode(); startCropButton.textContent = "調整をキャンセル"; }});
-    function drawCropOverlay() {
-         if (!isCroppingMode) return; 
-         const ctx = ctxCropOverlay; ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height); ctx.beginPath(); ctx.moveTo(cropPoints[0].x, cropPoints[0].y); 
-         for (let i = 1; i < cropPoints.length; i++) { ctx.lineTo(cropPoints[i].x, cropPoints[i].y); } ctx.closePath(); ctx.fillStyle = "rgba(59, 130, 246, 0.2)"; ctx.fill(); ctx.strokeStyle = "rgba(37, 99, 235, 1)"; ctx.lineWidth = 4; ctx.stroke(); cropPoints.forEach((p, i) => { ctx.beginPath(); ctx.arc(p.x, p.y, CROP_HANDLE_RADIUS, 0, 2 * Math.PI); ctx.fillStyle = (i === draggedPointIndex) ? "#dc2626" : "#2563eb"; ctx.fill(); });
-        }
-    cropOverlayCanvas.addEventListener('mousedown', (e) => {
-         if (!isCroppingMode) return; const rect = cropOverlayCanvas.getBoundingClientRect(); const mouseX = (e.clientX - rect.left) * (cropOverlayCanvas.width / rect.width); const mouseY = (e.clientY - rect.top) * (cropOverlayCanvas.height / rect.height); draggedPointIndex = cropPoints.findIndex(p => Math.sqrt((p.x - mouseX)**2 + (p.y - mouseY)**2) < CROP_HANDLE_RADIUS); if (draggedPointIndex !== -1) { isDragging = true; cropOverlayCanvas.style.cursor = 'grabbing'; } 
-        });
-    cropOverlayCanvas.addEventListener('mousemove', (e) => {
-         if (!isCroppingMode) return; const rect = cropOverlayCanvas.getBoundingClientRect(); const mouseX = (e.clientX - rect.left) * (cropOverlayCanvas.width / rect.width); const mouseY = (e.clientY - rect.top) * (cropOverlayCanvas.height / rect.height); if (isDragging && draggedPointIndex !== -1) { cropPoints[draggedPointIndex] = { x: mouseX, y: mouseY }; drawCropOverlay(); } else { const onHandle = cropPoints.some(p => Math.sqrt((p.x - mouseX)**2 + (p.y - mouseY)**2) < CROP_HANDLE_RADIUS); cropOverlayCanvas.style.cursor = onHandle ? 'grab' : 'default'; } });
+    function drawCropOverlay() { if (!isCroppingMode) return; const ctx = ctxCropOverlay; ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height); ctx.beginPath(); ctx.moveTo(cropPoints[0].x, cropPoints[0].y); for (let i = 1; i < cropPoints.length; i++) { ctx.lineTo(cropPoints[i].x, cropPoints[i].y); } ctx.closePath(); ctx.fillStyle = "rgba(59, 130, 246, 0.2)"; ctx.fill(); ctx.strokeStyle = "rgba(37, 99, 235, 1)"; ctx.lineWidth = 4; ctx.stroke(); cropPoints.forEach((p, i) => { ctx.beginPath(); ctx.arc(p.x, p.y, CROP_HANDLE_RADIUS, 0, 2 * Math.PI); ctx.fillStyle = (i === draggedPointIndex) ? "#dc2626" : "#2563eb"; ctx.fill(); });}
+    cropOverlayCanvas.addEventListener('mousedown', (e) => { if (!isCroppingMode) return; const rect = cropOverlayCanvas.getBoundingClientRect(); const mouseX = (e.clientX - rect.left) * (cropOverlayCanvas.width / rect.width); const mouseY = (e.clientY - rect.top) * (cropOverlayCanvas.height / rect.height); draggedPointIndex = cropPoints.findIndex(p => Math.sqrt((p.x - mouseX)**2 + (p.y - mouseY)**2) < CROP_HANDLE_RADIUS); if (draggedPointIndex !== -1) { isDragging = true; cropOverlayCanvas.style.cursor = 'grabbing'; } });
+    cropOverlayCanvas.addEventListener('mousemove', (e) => { if (!isCroppingMode) return; const rect = cropOverlayCanvas.getBoundingClientRect(); const mouseX = (e.clientX - rect.left) * (cropOverlayCanvas.width / rect.width); const mouseY = (e.clientY - rect.top) * (cropOverlayCanvas.height / rect.height); if (isDragging && draggedPointIndex !== -1) { cropPoints[draggedPointIndex] = { x: mouseX, y: mouseY }; drawCropOverlay(); } else { const onHandle = cropPoints.some(p => Math.sqrt((p.x - mouseX)**2 + (p.y - mouseY)**2) < CROP_HANDLE_RADIUS); cropOverlayCanvas.style.cursor = onHandle ? 'grab' : 'default'; } });
     const stopDrag = () => { if (isDragging) { isDragging = false; draggedPointIndex = -1; cropOverlayCanvas.style.cursor = 'grab'; } };
     cropOverlayCanvas.addEventListener('mouseup', stopDrag);
     cropOverlayCanvas.addEventListener('mouseout', stopDrag);
@@ -1174,8 +1154,6 @@
             homographyMatrix = getHomographyMatrix(srcPoints, dstPoints);
             // *** MODIFIED *** Apply homography to both ankles and wrists → 手首には補正を適用しない様に修正
             correctedAnklePositions = applyHomographyToAllPoints(anklePositions, homographyMatrix, poseCanvas.width, poseCanvas.height, 'Ankle');
-            // Websorageに補正後の座標を保存
-            localStorage.setItem('cropPoints', JSON.stringify(cropPoints));
 
 
 
@@ -1194,11 +1172,7 @@
             loadingTxt.textContent = "座標の補正が適用されました。";
         } catch (error) { console.error("Failed to compute homography:", error); loadingTxt.textContent = "エラー: 座標の補正に失敗しました。四隅が交差しないように指定してください。"; }
     });
-    resetCorrectionButton.addEventListener('click', () => {
-         isCorrectionApplied = false; homographyMatrix = null; correctedAnklePositions = []; correctedWristPositions = []; stopCroppingMode(); startCropButton.textContent = "コートに合わせてトリミング"; if (!visualizationControls.classList.contains('hidden')) { drawAnalysis(parseFloat(timeSlider.value)); } loadingTxt.textContent = "座標の補正をリセットしました。"; 
-         // localStorageから補正後の座標を削除
-         localStorage.removeItem('cropPoints');
-        });
+    resetCorrectionButton.addEventListener('click', () => { isCorrectionApplied = false; homographyMatrix = null; correctedAnklePositions = []; correctedWristPositions = []; stopCroppingMode(); startCropButton.textContent = "コートに合わせてトリミング"; if (!visualizationControls.classList.contains('hidden')) { drawAnalysis(parseFloat(timeSlider.value)); } loadingTxt.textContent = "座標の補正をリセットしました。"; });
     
     // *** MODIFIED *** A generic function to apply homography based on key prefix
     function applyHomographyToAllPoints(points, H, videoW, videoH, keyPrefix) {
